@@ -616,15 +616,15 @@ html.landing .stage{display:flex;flex-direction:column;justify-content:center;mi
 .last b{color:var(--text);font-weight:600}
 .last:hover{border-color:var(--blue);color:var(--blue)}
 
-/* 주차비: 시군구 유료 목록 — 이름 아래 요금 규칙 한 줄, 오른쪽에 1시간 요금 */
-.list.fee a{align-items:flex-start;padding-top:12px;padding-bottom:12px}
-.list.fee .nm{display:flex;flex-direction:column;gap:2px;min-width:0}
-.list.fee .nm small{margin-left:0}
-.list.fee .rule{font-weight:500;color:var(--muted);letter-spacing:0;line-height:1.35;white-space:normal}
-.list.fee .meta{white-space:normal;text-align:right;flex:none;max-width:44%;padding-top:2px}
+/* 주차비: 시군구 유료 목록 — 이름 | 1시간 요금, 아래 줄에 요금 규칙 (grid: 가격 열은 절대 줄바꿈 안 함) */
+.list.fee a{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;padding:14px 2px;align-items:start}
+.list.fee .nm{display:block;min-width:0;overflow-wrap:anywhere}
+.list.fee .nm small{margin-left:6px}
+.list.fee .rule{grid-column:1 / -1;display:block;margin:0;font-size:14px;line-height:1.5;font-weight:500;color:var(--muted);letter-spacing:0;white-space:normal}
+.list.fee .meta{display:flex;flex-direction:column;align-items:flex-end;max-width:none;margin-left:0;white-space:nowrap;text-align:right;font-size:14px}
 .list.fee .meta b{color:var(--text);font-weight:700}
-.list.fee a::after{margin-top:6px}
-@media (max-width:480px){.list.fee .meta{max-width:38%;font-size:.84rem}}
+.list.fee .meta small{margin:2px 0 0;font-weight:500}
+.list.fee a::after{display:none}
 
 /* 주차비 additions */
 h1,.hero h1,.sheet-title{word-break:keep-all;overflow-wrap:anywhere}
@@ -640,3 +640,11 @@ header.top nav::-webkit-scrollbar{display:none}
 @media(max-width:560px){.seg + .seg{margin-left:0}.seg button{padding:8px 11px;font-size:.88rem}}
 .sheet .seg{background:color-mix(in srgb,var(--text) 6%,transparent)}
 @media(prefers-color-scheme:dark){.seg button[aria-pressed="true"]{background:var(--surface-2)}}
+
+/* touch targets + segmented layout on the lot page */
+.seg button{min-height:44px}
+#dur{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));width:100%;margin-left:0}
+#disc{display:flex;flex-wrap:wrap;margin-left:0}
+.sheet-num{flex-wrap:wrap}
+#fee-for{font-size:18px}
+#result{scroll-margin-top:calc(var(--hdr,64px) + 16px)}

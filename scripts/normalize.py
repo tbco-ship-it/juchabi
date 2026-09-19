@@ -32,6 +32,7 @@ CATS = [  # (key, label, regex)
     ("rotation", "요일제·부제", r"요일제|부제|함께타기|승용차\s*요일"),
 ]
 PCT = re.compile(r"(\d{2,3})\s*(?:%|퍼센트|프로|할인|감면|경감|감경)")
+CONDITIONAL = re.compile(r"\d+\s*(?:시간|분)\s*(?:면제|무료|이내|까지|초과)|면제\s*후|이후|초과\s*시|1일\s*1|회당|75세|70세")
 FREE = re.compile(r"면제|무료")
 
 
@@ -59,10 +60,12 @@ def parse_discounts(note):
         pct = int(m.group(1)) if m else None
         if pct is None and re.search(r"(무료|면제)", seg) and not re.search(r"\d+\s*시간\s*(면제|무료)", seg):
             pct = 100
+        # '4시간 면제 후 50%' 같은 조건부 감면은 단순 %로 계산하면 틀린다 → pct 없이 원문만 (계산기 버튼 안 만듦)
+        simple = pct is not None and not CONDITIONAL.search(seg)
         for key, _label, rx in CATS:
             if re.search(rx, seg):
-                if key not in found or (found[key]["pct"] is None and pct is not None):
-                    found[key] = {"pct": pct, "text": seg[:120]}
+                if key not in found or (found[key]["pct"] is None and simple):
+                    found[key] = {"pct": pct if simple else None, "text": seg, "conditional": not simple}
     return found
 
 
@@ -79,9 +82,18 @@ def hhmm(v):
     return v if re.fullmatch(r"\d{1,2}:\d{2}", v) else ""
 
 
+INTEGER = re.compile(r"^(?:\d+|\d{1,3}(?:,\d{3})+)$")
+
+
 def to_int(v):
-    v = re.sub(r"[^\d]", "", v or "")
-    return int(v) if v else None
+    """Only plain integers. '150+300', '0.5', '4.5' are compound/decimal fees the provider typed in — they must not be
+    digit-stripped into 150300 / 5; the caller marks the lot fee_review instead."""
+    v = (v or "").strip()
+    return int(v.replace(",", "")) if INTEGER.match(v) else None
+
+
+def fee_needs_review(r):
+    return any((r[k] or "").strip() and to_int(r[k]) is None for k in ("BASIC_TIME", "BASIC_CHARGE", "ADD_UNIT_TIME", "ADD_UNIT_CHARGE", "DAY_CMMTKT_ADJ_TIME", "DAY_CMMTKT", "MONTH_CMMTKT"))
 
 
 def slugify_ko(name):
@@ -157,6 +169,7 @@ def main():
             "fee": fee, "basic_min": to_int(r["BASIC_TIME"]), "basic_won": to_int(r["BASIC_CHARGE"]),
             "add_min": to_int(r["ADD_UNIT_TIME"]), "add_won": to_int(r["ADD_UNIT_CHARGE"]),
             "day_hours": to_int(r["DAY_CMMTKT_ADJ_TIME"]), "day_won": to_int(r["DAY_CMMTKT"]), "month_won": to_int(r["MONTH_CMMTKT"]),
+            "fee_review": fee_needs_review(r), "fee_raw": {k: r[k] for k in ("BASIC_TIME", "BASIC_CHARGE", "ADD_UNIT_TIME", "ADD_UNIT_CHARGE", "DAY_CMMTKT") if r[k] and to_int(r[k]) is None},
             "pay": r["METPAY"].strip(), "note": note, "discounts": parse_discounts(note), "free_open": free_open(note),
             "org": r["INSTITUTION_NM"].strip(), "phone": r["PHONE_NUMBER"].strip(), "lat": lat, "lng": lng,
             "disabled_zone": r["PWDBS_PPK_ZONE_YN"].strip() == "Y", "ref_date": r["REFERENCE_DATE"].strip(), "provider": r["INSTT_NM"].strip(),

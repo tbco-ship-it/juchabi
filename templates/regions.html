@@ -7,7 +7,7 @@
 <p class="prose">전국 {{ "{:,}".format(n_lots) }}곳. 시군구 이름 옆 숫자는 주차장 수, 오른쪽은 유료 주차장 1시간 요금의 중앙값입니다.</p>
 {% for s in sidos.values() %}
 <div class="sec"><div class="sec-h"><h2>{{ s.name }} <span class="muted small">{{ s.stats.n }}곳</span></h2><a href="{{ base }}{{ s.slug }}/">{{ s.short }} 전체</a></div>
-<ul class="list">{% for g in s.sigungu.values() %}<li><a href="{{ base }}{{ s.slug }}/{{ g.name }}/">{{ g.name }} <small>{{ g.stats.n }}곳</small><span class="meta">{% if g.stats.h1_med %}1시간 {{ g.stats.h1_med|won }}{% else %}무료 {{ g.stats.free }}곳{% endif %}</span></a></li>{% endfor %}</ul></div>
+<ul class="list">{% for g in s.sigungu.values() %}<li><a href="{{ base }}{{ s.slug }}/{{ g.name }}/">{{ g.name }} <small>{{ g.stats.n }}곳</small><span class="meta">{% if g.stats.h1_med is not none %}1시간 {{ g.stats.h1_med|won }}{% else %}무료 {{ g.stats.free }}곳{% endif %}</span></a></li>{% endfor %}</ul></div>
 {% if loop.index == 3 %}<div class="ad-slot"><!-- ad: regions --></div>{% endif %}
 {% endfor %}
 {% endblock %}

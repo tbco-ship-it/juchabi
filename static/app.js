@@ -3,19 +3,13 @@
   const v = (cssHref.match(/\?v=([^&]+)/) || [])[1] || '';
   const base = cssHref.replace(/static\/style\.css.*$/, '');
   const $ = id => document.getElementById(id);
-  const won = n => n.toLocaleString('ko-KR') + '원';
-  // [name, sido idx, sigungu, locality, slug|0, lat, lng, fee(0 무료/1 유료/2 혼합), basic_min, basic_won, add_min, add_won, day_won, month_won, free_open, spaces]
+  const won = n => Number.isFinite(n) ? n.toLocaleString('ko-KR') + '원' : '요금 확인 필요';
+  // [name, sido idx, sigungu, locality, slug|0, lat, lng, fee(0 무료/1 유료/2 혼합), basic_min, basic_won, add_min, add_won, day_won, month_won, free_open, spaces, costs[1,2,3,5,8h]]
   const FEE = ['무료', '유료', '혼합'];
-  const L = S => a => ({ name: a[0], sido: S[a[1]][1], sigungu: a[2], loc: a[3], path: `${S[a[1]][0]}/${a[2]}/${a[4] || a[0].replace(/\s+/g, '')}/`, lat: a[5], lng: a[6], fee: FEE[a[7]], bmin: a[8], bwon: a[9], amin: a[10], awon: a[11], day: a[12], month: a[13], fo: a[14], spaces: a[15] });
-  // Same rule as scripts/build.py cost(): basic block, then ceil(extra/unit)*unit fee, capped by the day ticket.
-  function cost(l, min) {
-    if (l.fee === '무료') return 0;
-    if ((!l.bwon && !l.awon) || l.bwon == null || (l.bmin == null && l.amin == null)) return null;
-    const b = l.bmin || 0; let t;
-    if (min <= b) t = l.bwon; else if (l.amin && l.awon != null) t = l.bwon + Math.ceil((min - b) / l.amin) * l.awon; else return null;
-    if (l.day) t = Math.min(t, l.day);
-    return t;
-  }
+  const L = S => a => ({ name: a[0], sido: S[a[1]][1], sigungu: a[2], loc: a[3], path: `${S[a[1]][0]}/${a[2]}/${a[4] || a[0].replace(/\s+/g, '')}/`, lat: a[5], lng: a[6], fee: FEE[a[7]], bmin: a[8], bwon: a[9], amin: a[10], awon: a[11], day: a[12], month: a[13], fo: a[14], spaces: a[15], costs: a[16] || [], q: (a[0] + '|' + a[2] + a[3] + '|' + S[a[1]][1] + a[2]).toLowerCase().replace(/\s+/g, '') });
+  // Fees are computed once in scripts/build.py (cost()); the page only reads them so both surfaces always agree.
+  const HOURS = [1, 2, 3, 5, 8];
+  const cost = (l, min) => { const i = HOURS.indexOf(min / 60); return i < 0 ? null : (l.costs[i] == null ? null : l.costs[i]); };
   const feeLine = l => l.fee === '무료' ? '무료' : (l.bwon != null && l.bmin ? `기본 ${l.bmin}분 ${won(l.bwon)}${l.amin && l.awon != null ? ` · 추가 ${l.amin}분당 ${won(l.awon)}` : ''}` : (l.bwon != null && l.amin && l.awon != null ? `${l.amin}분당 ${won(l.awon)}` : '요금 미기재'));
 
   // ── lot page: 시간 × 감면 toggles drive the big number ──
@@ -32,22 +26,34 @@
 
   // ── home: typeahead + geolocation over the compact index ──
   const input = $('q'); if (!input) return;
-  const IDX = await (await fetch(base + 'static/index.json?v=' + v)).json();
-  const D = IDX.items.map(L(IDX.sidos));
-  const out = $('result'), menu = $('q-menu');
+  const out = $('result'), menu = $('q-menu'), geoBtn = $('geo');
   const norm = s => (s || '').toLowerCase().replace(/\s+/g, '');
+  // Loading state: the 2 MB index takes a moment on mobile — say so, and offer a retry / region browse on failure.
+  const ph = input.placeholder; input.placeholder = '주차장 목록 불러오는 중…'; input.disabled = true; geoBtn.disabled = true;
+  let D;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const r = await fetch(base + 'static/index.json?v=' + v); if (!r.ok) throw new Error('HTTP ' + r.status);
+      const IDX = await r.json(); D = IDX.items.map(L(IDX.sidos)); break;
+    } catch (e) {
+      if (attempt < 2) { await new Promise(r => setTimeout(r, 1200 * (attempt + 1))); continue; }
+      input.placeholder = '목록을 못 불러왔어요'; const msg = $('geo-msg'); msg.hidden = false; msg.innerHTML = '주차장 목록을 불러오지 못했습니다. <a href="#" id="retry">다시 시도</a>하거나 <a href="' + base + 'regions/">지역별로 찾기</a>.';
+      $('retry').addEventListener('click', ev => { ev.preventDefault(); location.reload(); }); return;
+    }
+  }
+  input.placeholder = ph; input.disabled = false; geoBtn.disabled = false;
   function card(l, extra = '') {
     const c1 = cost(l, 60), c2 = cost(l, 120), c3 = cost(l, 180);
     const cls = l.fee === '무료' ? 'balanced' : (c1 == null ? 'quiet' : '');
     const head = l.fee === '무료' ? '무료' : (c1 == null ? l.fee : won(c1));
     const sub = l.fee === '무료' ? '' : (c1 == null ? '' : '1시간');
-    const line = l.fee === '무료' ? `무료 주차장${l.fo ? ' · 무료 개방 문구 있음' : ''}${l.spaces ? ` · ${l.spaces}면` : ''}` : `${feeLine(l)}${c2 != null ? ` · 2시간 ${won(c2)} · 3시간 ${won(c3)}` : ''}${l.day ? ` · 일주차 ${won(l.day)}` : ''}${l.month ? ` · 월정기 ${won(l.month)}` : ''}`;
+    const line = l.fee === '무료' ? `무료 주차장${l.fo ? ' · 무료 개방 문구 있음' : ''}${l.spaces ? ` · ${l.spaces}면` : ''}` : `${feeLine(l)}${c2 != null ? ` · 2시간 ${won(c2)}` : ''}${c3 != null ? ` · 3시간 ${won(c3)}` : ''}${l.day ? ` · 일주차 ${won(l.day)}` : ''}${l.month ? ` · 월정기 ${won(l.month)}` : ''}`;
     return `<section class="sheet ${cls}"><p class="sheet-label">${l.sido} ${l.sigungu}${l.loc ? ' ' + l.loc : ''}${extra}</p><div class="sheet-num"><span class="num${head.length > 6 ? ' small-num' : ''}">${head}</span>${sub ? `<span class="pct">${sub}</span>` : ''}</div><p class="sheet-title">${l.name}</p><p class="sheet-text">${line}</p><p class="sheet-actions"><a class="next" href="${base}${l.path.split('/').map(encodeURIComponent).join('/')}">요금표·감면·운영시간</a>${l.lat ? `<a class="next" href="https://map.naver.com/p/search/${encodeURIComponent(l.name + ' ' + l.sigungu)}" target="_blank" rel="noopener">네이버 지도</a>` : ''}</p></section>`;
   }
   let items = [], active = -1;
   function open(q) {
     const nq = norm(q);
-    items = nq ? D.filter(l => norm(l.name).includes(nq) || norm(l.sigungu + l.loc).includes(nq) || norm(l.sido + l.sigungu).includes(nq)).slice(0, 8) : [];
+    items = nq ? D.filter(l => l.q.includes(nq)).slice(0, 8) : [];
     menu.innerHTML = items.length ? items.map((l, i) => `<li role="option" data-i="${i}" ${i === active ? 'aria-selected="true"' : ''}>${l.name}<small class="muted"> ${l.sido} ${l.sigungu}${l.loc ? ' ' + l.loc : ''} · ${l.fee === '무료' ? '무료' : (cost(l, 60) != null ? '1시간 ' + won(cost(l, 60)) : l.fee)}</small></li>`).join('') : (nq ? '<li class="empty">이 이름의 공영주차장이 없어요. 동네나 역 이름으로도 찾아보세요.</li>' : '<li class="empty">주차장 이름, 동네, 역 이름을 입력하세요.</li>');
     menu.hidden = false; input.setAttribute('aria-expanded', 'true');
   }
@@ -68,10 +74,14 @@
   function show(html) {
     leaveLanding(); out.innerHTML = html;
     out.classList.remove('is-in'); out.classList.add('reveal');
-    let i = 0; out.querySelectorAll(':scope > *').forEach(c => { [c, ...c.children].forEach(el => { el.classList.add('rv'); el.style.setProperty('--d', (i++ * 90) + 'ms'); }); });
+    let i = 0; out.querySelectorAll(':scope > *').forEach(c => { [c, ...c.children].forEach(el => { el.classList.add('rv'); el.style.setProperty('--d', (i++ * 45) + 'ms'); }); });
     void out.offsetHeight; out.classList.add('is-in');
   }
-  function choose(l) { input.value = l.name; close(); show(card(l)); localStorage.setItem('juchabi.lot', l.path); }
+  function choose(l) {
+    input.value = l.name; close(); show(card(l)); localStorage.setItem('juchabi.lot', l.path);
+    // On a phone the result sits below the form: bring the price into view (not for GPS lists — the user didn't pick one).
+    if (innerWidth < 900) setTimeout(() => out.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' }), 60);
+  }
   input.addEventListener('focus', () => { setTimeout(() => input.select(), 0); open(input.value); });
   input.addEventListener('input', () => { active = -1; open(input.value); });
   input.addEventListener('keydown', e => {
@@ -84,7 +94,7 @@
   menu.addEventListener('mousedown', e => { const li = e.target.closest('li[data-i]'); if (li) { choose(items[+li.dataset.i]); e.preventDefault(); } });
   input.addEventListener('blur', () => setTimeout(close, 120));
 
-  const geoBtn = $('geo'), geoIdle = geoBtn.textContent;
+  const geoIdle = geoBtn.textContent;
   const busy = on => { geoBtn.disabled = on; geoBtn.classList.toggle('busy', on); geoBtn.textContent = on ? '위치를 확인하는 중…' : geoIdle; };
   geoBtn.addEventListener('click', () => {
     const msg = $('geo-msg'); msg.hidden = true;

@@ -1,19 +1,19 @@
 {% extends "base.html" %}
-{% block title %}공영주차장 요금 조회 — 전국 {{ "{:,}".format(n_lots) }}곳 주차비·감면·운영시간 | {{ site }}{% endblock %}
+{% block title %}공영주차장 요금 조회 — 전국 공영·민영 {{ "{:,}".format(n_lots) }}곳 주차비·감면·운영시간 | {{ site }}{% endblock %}
 {% block head %}<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebApplication","name":"{{ site }}","applicationCategory":"UtilitiesApplication","inLanguage":"ko","url":"{{ origin }}{{ base }}","offers":{"@type":"Offer","price":"0","priceCurrency":"KRW"}}</script>
 <script>document.documentElement.classList.add('landing')</script>{% endblock %}
 {% block content %}
 <div class="stage" id="stage">
 <section class="hero">
   <h1>이 주차장, 한 시간에 얼마일까요?</h1>
-  <p>주차장 이름이나 동네를 치면 기본요금·추가요금으로 1시간·2시간 주차비를 바로 계산하고, 경차·저공해·다자녀 감면까지 보여드립니다. 전국 공영주차장 {{ "{:,}".format(n_lots) }}곳, 지자체 공공데이터 기준.</p>
+  <p>주차장 이름이나 동네를 치면 기본요금·추가요금으로 1시간·2시간 주차비를 바로 계산하고, 경차·저공해·다자녀 감면까지 보여드립니다. 전국 공영·민영 주차장 {{ "{:,}".format(n_lots) }}곳, 지자체 공공데이터 기준.</p>
 </section>
 
 <section class="calc-grid">
 <div class="calc card" id="calc">
   <h2 class="card-title">주차장 찾기</h2>
   <label class="field">주차장 이름 또는 동네
-    <input id="q" class="pick search" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" autocomplete="off" placeholder="예: 강남역, 수원역 환승, 해운대" data-kind="lots"><ul class="menu" id="q-menu" role="listbox" hidden></ul>
+    <input id="q" class="pick search" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="q-menu" autocomplete="off" placeholder="예: 강남역, 수원역 환승, 해운대" data-kind="lots"><ul class="menu" id="q-menu" role="listbox" hidden></ul>
   </label>
   <div class="field"><span class="field-label">또는</span>
     <button id="geo" class="next geo" type="button">내 위치 근처 공영주차장</button>

@@ -7,11 +7,11 @@
 <section class="sheet quiet">
   <p class="sheet-label">{{ s.short }} 공영주차장</p>
   <div class="sheet-num"><span class="num">{{ s.stats.n }}</span><span class="pct">곳</span></div>
-  <p class="sheet-title">무료 {{ s.stats.free }}곳 · 유료 {{ s.stats.paid }}곳{% if s.stats.h1_med %} · 유료 1시간 중앙값 {{ s.stats.h1_med|won }}{% endif %}</p>
+  <p class="sheet-title">무료 {{ s.stats.free }}곳 · 유료 {{ s.stats.paid }}곳{% if s.stats.h1_med is not none %} · 유료 1시간 중앙값 {{ s.stats.h1_med|won }}{% endif %}</p>
   <p class="sheet-text">월정기권 운영 {{ s.stats.monthly }}곳, 야간·주말 무료 개방 {{ s.stats.free_open }}곳. 감면 문구가 있는 주차장: {% for k, n in s.stats.disc %}{{ CAT_LABEL[k] }} {{ n }}곳{% if not loop.last %}, {% endif %}{% endfor %}.</p>
 </section>
 <div class="ad-slot"><!-- ad: sido --></div>
 <div class="sec"><div class="sec-h"><h2>시군구별</h2></div>
-<ul class="list">{% for g in s.sigungu.values() %}<li><a href="{{ base }}{{ s.slug }}/{{ g.name }}/">{{ g.name }} <small>{{ g.stats.n }}곳 · 무료 {{ g.stats.free }}</small><span class="meta">{% if g.stats.h1_med %}1시간 {{ g.stats.h1_med|won }}{% else %}전부 무료{% endif %}</span></a></li>{% endfor %}</ul></div>
+<ul class="list">{% for g in s.sigungu.values() %}<li><a href="{{ base }}{{ s.slug }}/{{ g.name }}/">{{ g.name }} <small>{{ g.stats.n }}곳 · 무료 {{ g.stats.free }}</small><span class="meta">{% if g.stats.h1_med is not none %}1시간 {{ g.stats.h1_med|won }}{% else %}전부 무료{% endif %}</span></a></li>{% endfor %}</ul></div>
 <p class="muted small">1시간 요금은 각 주차장의 기본시간·추가단위요금으로 환산한 값의 중앙값입니다. 지자체 기준일 최신 {{ s.stats.latest }}.</p>
 {% endblock %}

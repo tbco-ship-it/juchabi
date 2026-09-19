@@ -8,6 +8,7 @@ import json
 import math
 import re
 import shutil
+from xml.sax.saxutils import escape
 from collections import defaultdict, Counter
 from pathlib import Path
 
@@ -19,7 +20,7 @@ SITE = "주차비"
 SIDO_ORDER = ["seoul", "gyeonggi", "incheon", "busan", "daegu", "daejeon", "gwangju-jeonnam", "ulsan", "sejong", "gangwon", "chungbuk", "chungnam", "jeonbuk", "gyeongbuk", "gyeongnam", "jeju"]
 SIDO_SHORT = {"서울특별시": "서울", "부산광역시": "부산", "대구광역시": "대구", "인천광역시": "인천", "전남광주통합특별시": "전남·광주", "대전광역시": "대전", "울산광역시": "울산",
               "세종특별자치시": "세종", "경기도": "경기", "강원특별자치도": "강원", "충청북도": "충북", "충청남도": "충남", "전북특별자치도": "전북", "경상북도": "경북", "경상남도": "경남", "제주특별자치도": "제주"}
-CAT_LABEL = {"light": "경차", "green": "저공해·전기차", "disabled": "장애인", "multi": "다자녀", "veteran": "국가유공자", "senior": "65세 이상", "pregnant": "임산부", "rotation": "요일제·부제"}
+CAT_LABEL = {"light": "경차", "green": "저공해·전기차", "disabled": "장애인", "multi": "다자녀", "veteran": "국가유공자", "senior": "고령자", "pregnant": "임산부", "rotation": "요일제·부제"}
 CAT_ORDER = ["light", "green", "disabled", "multi", "veteran", "senior", "pregnant", "rotation"]
 HOURS = [1, 2, 3, 5, 8]
 
@@ -32,6 +33,8 @@ def cost(l, minutes):
     """Fee for `minutes` under the reported 기본시간/기본요금/추가단위 rule; None when the lot has no usable rule."""
     if l["fee"] == "무료":
         return 0
+    if l.get("fee_review"):
+        return None  # 복합·소수 요금은 원문 보존, 계산 보류
     b_min, b_won, a_min, a_won = l["basic_min"], l["basic_won"], l["add_min"], l["add_won"]
     if not b_won and not a_won:
         return None  # 유료인데 금액이 0/공란 → 미기재
@@ -93,6 +96,16 @@ def main():
         toks = l["addr"].split()
         l["locality"] = next((t for t in toks[1:] if re.search(r"(읍|면|동|리|가|로|길)$", t) and not t.endswith(("시", "군", "구"))), "")
         l["disc_list"] = [(k, CAT_LABEL[k], v["pct"], v["text"]) for k in CAT_ORDER for v in [l["discounts"].get(k)] if v]
+        ld = {"@context": "https://schema.org", "@type": "ParkingFacility", "name": l["name"], "address": {"@type": "PostalAddress", "streetAddress": l["addr"], "addressCountry": "KR"}}
+        if l["lat"]:
+            ld["geo"] = {"@type": "GeoCoordinates", "latitude": l["lat"], "longitude": l["lng"]}
+        if l["phone"]:
+            ld["telephone"] = l["phone"]
+        if l["h_week"] and l["h_week"] != "24시간":
+            ld["openingHours"] = "Mo-Fr " + l["h_week"].replace("~", "-")
+        if l["fee"] in ("무료", "유료"):
+            ld["isAccessibleForFree"] = l["fee"] == "무료"
+        l["ld"] = ld
         l["latest"] = max(l["ref_date"], "")
     sidos = {}
     for l in lots:
@@ -104,7 +117,7 @@ def main():
     def stats(lst):
         paid = [l for l in lst if l["fee"] != "무료"]
         free = [l for l in lst if l["fee"] == "무료"]
-        h1 = sorted(c for c in (l["costs"][1] for l in paid) if c)
+        h1 = sorted(c for c in (l["costs"][1] for l in paid) if c is not None)  # 첫 1시간 0원도 값이다
         return {"n": len(lst), "free": len(free), "paid": len(paid), "h1_med": h1[len(h1) // 2] if h1 else None,
                 "monthly": len([l for l in lst if l["month_won"]]), "free_open": len([l for l in lst if l["free_open"]]),
                 "disc": Counter(k for l in lst for k in l["discounts"]).most_common(4),
@@ -122,6 +135,7 @@ def main():
     h = hashlib.md5()
     for f in sorted((ROOT / "static").glob("*")):
         h.update(f.read_bytes())
+    h.update((ROOT / "data/lots.json").read_bytes())  # index.json changes with the data
     v = h.hexdigest()[:8]
     env = Environment(loader=FileSystemLoader(ROOT / "templates"), autoescape=select_autoescape(["html"]))
     env.filters["won"] = won
@@ -137,7 +151,8 @@ def main():
     sido_idx = {s["slug"]: i for i, s in enumerate(sidos.values())}
     r5 = lambda x: round(x, 5) if x is not None else None
     items = [[l["name"], sido_idx[l["sido_slug"]], l["sigungu"], l["locality"], 0 if l["slug"] == re.sub(r"\s+", "", l["name"]) else l["slug"], r5(l["lat"]), r5(l["lng"]), {"무료": 0, "유료": 1}.get(l["fee"], 2),
-              l["basic_min"], l["basic_won"], l["add_min"], l["add_won"], l["day_won"], l["month_won"], 1 if l["free_open"] else 0, l["spaces"]] for l in lots]
+              l["basic_min"], l["basic_won"], l["add_min"], l["add_won"], l["day_won"], l["month_won"], 1 if l["free_open"] else 0, l["spaces"],
+              [l["costs"][hh] for hh in HOURS]] for l in lots]  # index 16: precomputed 1/2/3/5/8h — JS never recomputes
     (DIST / "static/index.json").write_text(json.dumps({"sidos": sido_list, "items": items}, ensure_ascii=False, separators=(",", ":")))
 
     urls = []
@@ -175,7 +190,7 @@ def main():
         names.append(name)
         sm = ['<?xml version="1.0" encoding="UTF-8"?>', '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
         for u in ch:
-            sm.append(f"<url><loc>{origin}{base}{u}</loc><lastmod>{today.isoformat()}</lastmod></url>")
+            sm.append(f"<url><loc>{escape(origin + base + u)}</loc></url>")  # no lastmod: we don't track per-page change dates
         sm.append("</urlset>")
         (DIST / name).write_text("\n".join(sm))
     if len(chunks) > 1:
