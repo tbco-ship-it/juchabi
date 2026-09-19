@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}공영주차장 감면 기준 — 경차·저공해·장애인·다자녀·국가유공자 할인율 지자체별 정리 | {{ site }}{% endblock %}
+{% block description %}공영주차장 주차요금 감면 대상과 할인율. 경차 50%, 저공해차 50~80%, 장애인·국가유공자 50~80%, 다자녀·임산부·65세 이상. 지자체별로 데이터에 명시된 감면율 집계.{% endblock %}
+{% block content %}
+<nav class="crumbs"><a href="{{ base }}">홈</a> › 감면 기준</nav>
+<h1>공영주차장 감면 기준</h1>
+<div class="prose">
+<p>공영주차장 요금 감면은 주차장법이 아니라 <b>각 지자체의 주차장 설치 및 관리 조례</b>가 정합니다. 그래서 같은 경차라도 서울은 50%, 인천은 60%, 어떤 군은 무료입니다. 아래 표는 각 지자체가 공공데이터에 적은 감면 문구 {{ total.disc|map(attribute=1)|sum }}건을 항목별로 세어 "가장 흔한 할인율"을 보여줍니다. 내 지자체의 정확한 조건은 시군구 페이지의 각 주차장 특기사항 원문을 확인하세요.</p>
+</div>
+<div class="ad-slot"><!-- ad: guide --></div>
+{% for k in CAT_ORDER %}{% set rows = [] %}{% for s in sidos.values() %}{% for g in s.sigungu.values() %}{% if g.disc_summary[k] %}{% set _ = rows.append((s.short, g.name, g.disc_summary[k][0][0], g.disc_summary[k][0][1], s.slug)) %}{% endif %}{% endfor %}{% endfor %}
+<div class="sec"><div class="sec-h"><h2>{{ CAT_LABEL[k] }} <span class="muted small">{{ rows|length }}개 시군구에 명시</span></h2></div>
+{% if rows %}<table class="tbl"><thead><tr><th>시군구</th><th>가장 흔한 할인율</th><th>주차장 수</th></tr></thead><tbody>
+{% for sshort, gname, pct, n, sslug in rows|sort(attribute='2', reverse=True) %}<tr><td><a href="{{ base }}{{ sslug }}/{{ gname }}/">{{ sshort }} {{ gname }}</a></td><td><span class="pill">{{ pct }}%</span></td><td>{{ n }}</td></tr>{% endfor %}
+</tbody></table>{% else %}<p class="muted">데이터에 명시된 곳이 없습니다.</p>{% endif %}</div>
+{% endfor %}
+<div class="prose">
+<h2>감면 받을 때 알아둘 것</h2>
+<p><b>증빙</b>: 경차는 자동차등록증, 저공해차는 저공해자동차 표지(1·2·3종), 장애인은 장애인 주차표지, 다자녀는 지자체 다자녀 카드(아이조아·다누리·아이사랑 등 이름이 다릅니다)가 필요합니다. 무인정산기 주차장은 감면 등록을 미리 해두거나 호출 버튼으로 관리자를 불러야 합니다.</p>
+<p><b>중복 불가</b>: 대부분 조례는 "감면 사유가 둘 이상이면 높은 것 하나만" 적용합니다. <b>지역 제한</b>: 임산부·65세 이상·모범납세자 감면은 그 지자체 주민에게만 주는 경우가 많습니다. <b>면제 시간</b>: "2시간 면제 후 50%" 형태는 2시간까지 무료, 초과분에 50%입니다.</p>
+</div>
+{% endblock %}

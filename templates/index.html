@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}공영주차장 요금 조회 — 전국 {{ n_lots }}곳 주차비·감면·운영시간 | {{ site }}{% endblock %}
+{% block head %}<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebApplication","name":"{{ site }}","applicationCategory":"UtilitiesApplication","inLanguage":"ko","url":"{{ origin }}{{ base }}","offers":{"@type":"Offer","price":"0","priceCurrency":"KRW"}}</script>
+<script>document.documentElement.classList.add('landing')</script>{% endblock %}
+{% block content %}
+<div class="stage" id="stage">
+<section class="hero">
+  <h1>이 주차장, 한 시간에 얼마일까요?</h1>
+  <p>주차장 이름이나 동네를 치면 기본요금·추가요금으로 1시간·2시간 주차비를 바로 계산하고, 경차·저공해·다자녀 감면까지 보여드립니다. 전국 공영주차장 {{ n_lots }}곳, 지자체 공공데이터 기준.</p>
+</section>
+
+<section class="calc-grid">
+<div class="calc card" id="calc">
+  <h2 class="card-title">주차장 찾기</h2>
+  <label class="field">주차장 이름 또는 동네
+    <input id="q" class="pick search" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" autocomplete="off" placeholder="예: 강남역, 수원역 환승, 해운대" data-kind="lots"><ul class="menu" id="q-menu" role="listbox" hidden></ul>
+  </label>
+  <div class="field"><span class="field-label">또는</span>
+    <button id="geo" class="next geo" type="button">내 위치 근처 공영주차장</button>
+    <p id="geo-msg" class="muted small" hidden></p>
+  </div>
+  <p class="muted small">유료 주차장은 요금표로, 무료 주차장은 운영시간으로 보여드립니다.</p>
+  <button type="button" class="last" id="last" hidden><span>지난번 주차장</span><b id="last-name"></b></button>
+</div>
+<div id="result" class="result" aria-live="polite"></div>
+</section>
+</div>
+
+<div class="below" id="below">
+<div class="ad-slot"><!-- ad: home --></div>
+
+<section class="grid2">
+  <div class="sec">
+    <div class="sec-h"><h2>지역별 공영주차장 요금</h2><a href="{{ base }}regions/">전체 시군구</a></div>
+    <ul class="list">{% for s in sidos.values() %}<li><a href="{{ base }}{{ s.slug }}/">{{ s.short }}<span class="meta">{{ s.stats.n }}곳 · 무료 {{ s.stats.free }}</span></a></li>{% endfor %}</ul>
+  </div>
+  <div class="sec">
+    <div class="sec-h"><h2>이럴 때 보세요</h2></div>
+    <ul class="list">
+      <li><a href="{{ base }}guide/discount/">경차·저공해·다자녀 감면 기준<span class="meta">지자체별 할인율</span></a></li>
+      <li><a href="{{ base }}guide/monthly/">월정기권 싼 곳<span class="meta">{{ total.monthly }}곳 요금 비교</span></a></li>
+      <li><a href="{{ base }}guide/free-open/">야간·주말 무료 개방<span class="meta">{{ total.free_open }}곳</span></a></li>
+      <li><a href="{{ base }}guide/fee/">주차요금 계산 방식<span class="meta">기본시간·추가단위·일주차권</span></a></li>
+    </ul>
+  </div>
+</section>
+
+<section class="prose">
+  <h2>공영주차장 요금은 지자체마다 다릅니다</h2>
+  <p>같은 "1급지 노상주차장"이라도 서울은 5분에 400원, 지방 중소도시는 30분에 500원 식으로 단위와 금액이 다릅니다. 이 사이트는 각 지자체가 공공데이터포털에 올린 기본시간·기본요금·추가단위요금을 그대로 받아, 1시간·2시간·3시간 요금으로 환산해 보여줍니다. 일주차권 상한이 있으면 그 금액에서 멈춥니다. <a href="{{ base }}guide/fee/">계산 방식 자세히</a></p>
+  <h2>감면은 "특기사항"에 숨어 있습니다</h2>
+  <p>경차 50%, 저공해차 50~80%, 장애인·국가유공자 80% 같은 감면은 주차장별 특기사항에 적혀 있어 찾기 어렵습니다. {{ total.disc[0][1] if total.disc else 0 }}곳의 감면 문구를 항목별로 풀어 표시했고, 없는 곳은 조례 확인이 필요하다고 표시합니다. <a href="{{ base }}guide/discount/">감면 기준 모아보기</a></p>
+</section>
+</div>
+<script src="{{ base }}static/app.js?v={{ v }}" defer></script>
+{% endblock %}

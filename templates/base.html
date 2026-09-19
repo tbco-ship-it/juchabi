@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}{{ site }}{% endblock %}</title>
+<meta name="description" content="{% block description %}전국 공영주차장 {{ n_lots|string }}곳의 주차요금·운영시간·감면 기준. 1시간·2시간 요금을 바로 계산하고 내 근처 주차장을 찾습니다.{% endblock %}">
+<link rel="canonical" href="{{ origin }}{{ base }}{{ path }}">
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="preload" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" onload="this.onload=null;this.rel='stylesheet'">
+<noscript><link rel="stylesheet" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css"></noscript>
+<link rel="stylesheet" href="{{ base }}static/style.css?v={{ v }}">
+<link rel="icon" href="{{ base }}static/favicon.svg?v={{ v }}" type="image/svg+xml">
+{% if adsense_pub %}<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-{{ adsense_pub }}" crossorigin="anonymous"></script>{% endif %}
+{% block head %}{% endblock %}
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="{{ base }}">주차<em>비</em></a>
+  <nav>
+    <a href="{{ base }}">요금 조회</a>
+    <a href="{{ base }}regions/">지역별</a>
+    <a href="{{ base }}guide/discount/">감면 기준</a>
+    <a href="{{ base }}guide/monthly/">월정기권</a>
+    <a href="{{ base }}guide/free-open/">무료 개방</a>
+  </nav>
+</header>
+<main>
+{% block content %}{% endblock %}
+</main>
+<footer>
+  <p><a href="{{ base }}about/">소개</a> · <a href="{{ base }}methodology/">데이터 출처</a> · <a href="{{ base }}guide/fee/">요금 계산 방식</a> · <a href="{{ base }}privacy/">개인정보처리방침</a> · <a href="{{ base }}contact/">문의</a></p>
+  <p class="muted">공공데이터포털 전국주차장정보표준데이터({{ source.fetched[:4] }}-{{ source.fetched[4:6] }}-{{ source.fetched[6:] }} 수집, 지자체 기준일 최신 {{ total.latest }}) 기준. 요금과 감면은 지자체 조례 개정으로 바뀔 수 있으니 현장 안내판이 우선입니다.</p>
+</footer>
+<script src="{{ base }}static/ui.js?v={{ v }}" defer></script>
+</body>
+</html>

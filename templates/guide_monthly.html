@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}공영주차장 월정기권 요금 비교 — 전국 {{ total.monthly }}곳, 싼 곳 순 | {{ site }}{% endblock %}
+{% block description %}월정기권을 파는 공영주차장 {{ total.monthly }}곳의 월 요금. 시도별로 가장 싼 곳 10곳과 전국 상위 60곳.{% endblock %}
+{% block content %}
+<nav class="crumbs"><a href="{{ base }}">홈</a> › 월정기권</nav>
+<h1>공영주차장 월정기권 요금</h1>
+<p class="prose">월정기권 요금이 등록된 공영주차장 {{ total.monthly }}곳. 대부분 거주자 우선이나 선착순이며 대기가 있습니다. 신청은 관리기관(시설공단·구청 주차관리과)에 합니다. 1만 원 미만으로 적힌 값은 오기일 가능성이 높아 뺐습니다.</p>
+<div class="ad-slot"><!-- ad: guide --></div>
+{% for slug, lst in by_sido.items() if lst %}
+<div class="sec"><div class="sec-h"><h2>{{ sidos[slug].short }} <span class="muted small">싼 순 {{ lst|length }}곳</span></h2><a href="{{ base }}{{ slug }}/">{{ sidos[slug].short }} 전체</a></div>
+<ul class="list">{% for l in lst %}<li><a href="{{ base }}{{ l.path }}">{{ l.name }} <small>{{ l.sigungu }}</small><span class="meta">월 {{ l.month_won|won }}</span></a></li>{% endfor %}</ul></div>
+{% endfor %}
+{% endblock %}
