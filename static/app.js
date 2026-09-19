@@ -22,9 +22,9 @@
   const sheet = document.querySelector('.sheet[data-lot]');
   if (sheet && $('dur')) {
     const num = $('fee-num'), lab = $('fee-for');
-    const base1 = {}; sheet.querySelectorAll('.tbl.spec b').forEach((b, i) => { base1[[1, 2, 3, 5, 8][i]] = parseInt(b.textContent.replace(/[^\d]/g, ''), 10); });
+    const base1 = JSON.parse(sheet.dataset.costs || '{}');
     let h = 1, pct = 0;
-    const paint = () => { const c = Math.round(base1[h] * (100 - pct) / 100 / 10) * 10; num.textContent = won(c); lab.textContent = `${h}시간${pct ? ` · ${pct}% 감면` : ''}`; };
+    const paint = () => { const b = base1[h]; if (b == null) { num.textContent = '—'; lab.textContent = `${h}시간 · 계산 불가`; return; } const c = Math.round(b * (100 - pct) / 100 / 10) * 10; num.textContent = won(c); lab.textContent = `${h}시간${pct ? ` · ${pct}% 감면` : ''}`; };
     const seg = (id, key, set) => $(id).addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; $(id).querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b)); set(+b.dataset[key]); paint(); });
     seg('dur', 'h', x => h = x); seg('disc', 'pct', x => pct = x);
     return;

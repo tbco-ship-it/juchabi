@@ -9,7 +9,7 @@
 {% block content %}
 <nav class="crumbs"><a href="{{ base }}">홈</a> › <a href="{{ base }}{{ s.slug }}/">{{ s.short }}</a> › <a href="{{ base }}{{ s.slug }}/{{ g.name }}/">{{ g.name }}</a> › {{ l.name }}</nav>
 <h1>{{ l.name }} 주차요금</h1>
-<section class="sheet {{ 'balanced' if l.fee == '무료' else ('quiet' if l.costs[1] is none else '') }}" data-lot="{{ l.path }}">
+<section class="sheet {{ 'balanced' if l.fee == '무료' else ('quiet' if l.costs[1] is none else '') }}" data-lot="{{ l.path }}" data-costs='{{ l.costs|tojson }}'>
   <p class="sheet-label">{{ g.name }} · {{ l.kind }} {{ l.type }}주차장{% if l.spaces %} · {{ l.spaces }}면{% endif %}</p>
   <div class="sheet-num">{% if l.fee == '무료' %}<span class="num">무료</span>{% elif l.costs[1] is not none %}<span class="num" id="fee-num">{{ l.costs[1]|won }}</span><span class="pct" id="fee-for">1시간</span>{% else %}<span class="num small-num">{{ l.fee }}</span>{% endif %}</div>
   <p class="sheet-title">{% if l.fee == '무료' %}{{ l.h_week or '운영시간 미기재' }}{% if l.free_open %} · {{ l.free_open }}{% endif %}{% else %}{{ l.fee_line }}{% if l.day_won %} · 일주차 {{ l.day_won|won }}{% if l.day_hours and 0 < l.day_hours < 24 %}({{ l.day_hours }}시간){% endif %}{% endif %}{% endif %}</p>

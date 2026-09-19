@@ -11,7 +11,7 @@ concurrency:
   group: pages
   cancel-in-progress: true
 env:
-  ORIGIN: https://tbco-ship-it.github.io/juchabi
+  ORIGIN: https://tbco-ship-it.github.io
   BASE: /juchabi/
   CNAME: ""
 jobs:
