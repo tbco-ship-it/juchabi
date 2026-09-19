@@ -341,6 +341,38 @@ def apply_geocode(lots):
     print(f"geocode: {filled} lots got VWorld coordinates, {rejected} fuzzy matches rejected, {sum(1 for l in lots if not l['lat'])} still without")
 
 
+_SAT_FREE = re.compile(r"(토(?:요일)?\s*[·,+/]?\s*(?:일(?:요일)?)?\s*[·,+/]?\s*(?:공휴일)?\s*(?:은|는)?\s*무료|주말\s*(?:및\s*공휴일\s*)?(?:은|는)?\s*무료|토[·,+/]공휴일\s*무료|토·일·공휴일\s*무료)")
+_HOL_FREE = re.compile(r"((?:토(?:요일)?\s*[·,+/]\s*)?(?:일(?:요일)?\s*[·,+/]\s*)?공휴일\s*(?:은|는)?\s*무료|주말\s*및\s*공휴일\s*무료|토[·,+/]공휴일\s*무료|주말[·,+/]공휴일\s*무료)")
+
+
+def weekend_flags(lots):
+    """Outside Seoul the standard data has no 토·공휴일 유무료 column. Two legal inferences, each labelled with its basis:
+    - 'note': the 지자체 비고 says so in words ('토+공휴일 무료', '주말 및 공휴일 무료') → sat_free/hol_free True, basis 'note'.
+    - 'oper_day': 운영요일 lacks 토요일/공휴일 → no fee collection runs that day; for 노상 that is a free-parking signal
+      (spaces stay on the street), for 노외 the gate may be shut → sat_unstaffed/hol_unstaffed True, shown with that caveat."""
+    n_note = n_oper = 0
+    for l in lots:
+        if l.get("seoul_code") or l["fee"] == "무료":
+            continue
+        note = l.get("note") or ""
+        if _SAT_FREE.search(note) or _HOL_FREE.search(note):
+            if _SAT_FREE.search(note):
+                l["sat_free"] = True
+            if _HOL_FREE.search(note):
+                l["hol_free"] = True
+            l["weekend_basis"] = "note"
+            n_note += 1
+        od = l.get("oper_day") or ""
+        if od and "토요일" not in od:
+            l["sat_unstaffed"] = True
+        if od and "공휴일" not in od:
+            l["hol_unstaffed"] = True
+        if l.get("sat_unstaffed") or l.get("hol_unstaffed"):
+            l.setdefault("weekend_basis", "oper_day")
+            n_oper += 1
+    print(f"weekend flags: {n_note} lots from 비고 text, {n_oper} lots with 토/공휴일 outside 운영요일")
+
+
 def main():
     raws = sorted((ROOT / "data/raw").glob("parking_*.json"))
     src = raws[-1]
@@ -414,6 +446,7 @@ def main():
         })
     merge_seoul(lots)
     apply_geocode(lots)
+    weekend_flags(lots)
     # slugs unique within 시군구
     by_key = defaultdict(list)
     for l in lots:
