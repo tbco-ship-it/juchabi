@@ -63,6 +63,40 @@
   let freeOnly = false, lastStation = null;
   const pool = () => freeOnly ? D.filter(l => l.fee === '무료') : D;
   let items = [], active = -1;
+  // An address ('서면로 15-24', '역삼동 737') is not in the local index: VWorld (국토교통부) search turns it into coordinates and the
+  // result joins the list as a '근처 주차장' entry, same flow as a station. Only tried when the local search found nothing and the
+  // text carries a number — a 동네 without a number is the local index's job. JSONP because VWorld sends no CORS headers; the key is
+  // a VWorld dev key registered for juchabi.com (their browser-side model — the map JS API carries it the same way). VWorld blocks
+  // requests from abroad (Cloudflare Worker proxy got 520), so the browser, in Korea, asks directly.
+  const VW = 'https://api.vworld.kr/req/search?service=search&request=search&version=2.0&crs=epsg:4326&type=address&size=5&format=json&key=42AE5930-9672-44AD-9BC4-547E94B085C8';
+  const jsonp = url => new Promise((res, rej) => { const cb = 'vw_' + Math.random().toString(36).slice(2); const s = document.createElement('script'); const done = () => { delete window[cb]; s.remove(); }; window[cb] = j => { done(); res(j); }; s.onerror = () => { done(); rej(new Error('jsonp')); }; s.src = url + '&callback=' + cb; document.head.appendChild(s); });
+  const SIDO_RE = /^(서울특별시|부산광역시|대구광역시|인천광역시|광주광역시|대전광역시|울산광역시|세종특별자치시|경기도|강원특별자치도|강원도|충청북도|충청남도|전북특별자치도|전라북도|전라남도|경상북도|경상남도|제주특별자치도)\s+\S+\s+/;
+  async function vworld(q, category) {
+    const j = await jsonp(VW + '&query=' + encodeURIComponent(q) + '&category=' + category); const res = j.response || {};
+    if (res.status !== 'OK') return [];
+    return (res.result.items || []).map(i => { const a = i.address || {}; const addr = (category === 'road' ? a.road : a.parcel) || ''; return { kind: 'addr', addr, name: addr.replace(SIDO_RE, '').replace(/\s*\(.*\)$/, ''), lat: +i.point.y, lng: +i.point.x }; }).filter(i => i.addr && Number.isFinite(i.lat) && Number.isFinite(i.lng));
+  }
+  // road first for '서면로 15', parcel first for '부전동 100' (the road index also matches the 동 in the parenthetical); 동/호 variants of one building fold
+  async function lookup(q) { const cats = /(로|길)\s*\d/.test(q) ? ['road', 'parcel'] : ['parcel', 'road']; const out = [], seen = new Set(); for (const c of cats) for (const i of await vworld(q, c)) { const k = i.addr.replace(/\s*\(.*\)$/, ''); if (!seen.has(k)) { seen.add(k); out.push(i); } } return out.slice(0, 5); }
+  async function geocodeAddr(q) {
+    let items = await lookup(q); if (items.length) return items;
+    // '서면로 15-24' unknown → '서면로 15' (sub-number dropped); '범어리 100' unknown → '범어리' (number dropped): real neighbours, labelled as such
+    const m = q.match(/^(.*\d)-\d+$/) || q.match(/^(.*\S)\s+\d+(-\d+)?$/);
+    if (m) { items = await lookup(m[1].trim()); if (items.length) return items.map(i => ({ ...i, miss: q })); }
+    return [];
+  }
+  const addrCache = new Map(); let addrTimer = 0, autoPick = '';
+  const looksAddr = q => /\d/.test(q);
+  function geocode(key) {
+    clearTimeout(addrTimer);
+    addrTimer = setTimeout(async () => {
+      let found; try { found = await geocodeAddr(key); } catch (e) { found = []; found.error = true; setTimeout(() => addrCache.delete(key), 10000); }  // a failed lookup may be retried a moment later
+      addrCache.set(key, found);
+      if (norm(input.value) !== norm(key)) return;  // they typed on — the answer is for old text
+      if (autoPick === key && found.length) { autoPick = ''; choose(found[0]); return; }  // Enter/검색 was pressed while we were still asking
+      if (!menu.hidden || document.activeElement === input) open(input.value);
+    }, 350);
+  }
   function open(q) {
     const terms = q.trim().split(/\s+/).map(norm).filter(Boolean);  // '서울 가산동' → both terms must match
     const nq = norm(q);
@@ -71,8 +105,11 @@
     let lots = terms.length ? pool().filter(l => terms.every(t => l.q.includes(t))) : [];
     // 무료만 + a 동네 with only paid lots ('역삼동'): the paid matches still locate the place — offer '근처 무료 주차장' from their centre
     if (freeOnly && terms.length && !lots.length && !stations.length) { const m = D.filter(l => l.lat && terms.every(t => l.q.includes(t))); if (m.length) { const mid = a => a.sort((x, y) => x - y)[a.length >> 1]; stations.push({ kind: 'area', name: q.trim(), lat: mid(m.map(l => l.lat)), lng: mid(m.map(l => l.lng)), paid: m.length }); } }
-    items = terms.length ? [...stations, ...lots.slice(0, 8 - stations.length)] : [];
-    menu.innerHTML = items.length ? items.map((l, i) => l.kind ? `<li id="q-option-${i}" role="option" data-i="${i}" aria-selected="${i === active}">${l.name} 근처 ${freeOnly ? '무료 ' : ''}주차장<small class="muted"> ${l.kind === 'area' ? `이 동네 공영주차장 ${l.paid}곳은 모두 유료 · 가까운 순` : '역 기준 가까운 순'}</small></li>` : `<li id="q-option-${i}" role="option" data-i="${i}" aria-selected="${i === active}">${l.name}<small class="muted"> ${l.sido} ${l.sigungu}${l.loc ? ' ' + l.loc : ''} · ${l.fee === '무료' ? '무료' : (cost(l, 60) != null ? '1시간 ' + won(cost(l, 60)) : l.fee)}</small></li>`).join('') : (nq ? (freeOnly ? '<li class="empty">이 이름의 무료 공영주차장이 없어요. 역이나 동네 이름을 치면 그 근처 무료 주차장을 찾아드려요.</li>' : '<li class="empty">이 이름의 공영주차장이 없어요. 동네나 역 이름으로도 찾아보세요.</li>') : '<li class="empty">주차장 이름, 동네, 역 이름을 입력하세요.</li>');
+    const key = q.trim().replace(/\s+/g, ' '); let addrs = [], asking = false;
+    if (terms.length && !lots.length && !stations.length && looksAddr(key)) { if (addrCache.has(key)) addrs = addrCache.get(key); else { asking = true; geocode(key); } }
+    items = terms.length ? [...stations, ...addrs.slice(0, 4), ...lots.slice(0, 8 - stations.length)] : [];
+    const empty = !nq ? '주차장 이름, 동네, 역 이름이나 주소를 입력하세요.' : asking ? '주소를 확인하는 중…' : addrs.error ? '주소 확인이 잠시 안 돼요. 동네나 역 이름으로 찾아 주세요.' : looksAddr(key) ? '이 주소를 못 찾았어요. 도로명+건물번호(예: 테헤란로 152)나 동+번지로 쳐 보세요.' : (freeOnly ? '이 이름의 무료 공영주차장이 없어요. 역·동네 이름이나 주소를 치면 그 근처 무료 주차장을 찾아드려요.' : '이 이름의 공영주차장이 없어요. 동네나 역 이름, 주소로도 찾아보세요.');
+    menu.innerHTML = items.length ? (addrs[0] && addrs[0].miss ? `<li class="empty">'${addrs[0].miss}'는 없는 주소예요 · 비슷한 주소 기준</li>` : '') + items.map((l, i) => l.kind ? `<li id="q-option-${i}" role="option" data-i="${i}" aria-selected="${i === active}">${l.name} 근처 ${freeOnly ? '무료 ' : ''}주차장<small class="muted"> ${l.kind === 'area' ? `이 동네 공영주차장 ${l.paid}곳은 모두 유료 · 가까운 순` : l.kind === 'addr' ? l.addr + ' · 가까운 순' : '역 기준 가까운 순'}</small></li>` : `<li id="q-option-${i}" role="option" data-i="${i}" aria-selected="${i === active}">${l.name}<small class="muted"> ${l.sido} ${l.sigungu}${l.loc ? ' ' + l.loc : ''} · ${l.fee === '무료' ? '무료' : (cost(l, 60) != null ? '1시간 ' + won(cost(l, 60)) : l.fee)}</small></li>`).join('') : `<li class="empty">${empty}</li>`;
     menu.hidden = false; input.setAttribute('aria-expanded', 'true');
     const option = active >= 0 ? $(`q-option-${active}`) : null;
     if (option) { input.setAttribute('aria-activedescendant', option.id); option.scrollIntoView({ block: 'nearest' }); } else input.removeAttribute('aria-activedescendant');
@@ -104,12 +141,12 @@
   let userIntent = 0;  // a late GPS answer must not replace what the user searched/picked meanwhile
   function choose(l) {
     ++userIntent;
-    if (l.kind) {  // station or 동네 centre
+    if (l.kind) {  // station, 동네 centre or geocoded address
       input.value = l.name; close(); lastStation = l;
       const near = nearest(l.lat, l.lng, freeOnly, 6);
       const msg = $('geo-msg'); msg.hidden = false;
       // the nearest free lot may be far (강남역 → 과천 3.9 km): say so instead of presenting it as 'near'
-      msg.textContent = freeOnly && near.length && near[0].d > 2 ? `${l.name} 2 km 안에는 무료 공영주차장이 없어요 · 가장 가까운 ${near.length}곳 (직선거리)` : `${l.name} 근처 ${freeOnly ? '무료 ' : ''}주차장 ${near.length}곳 (직선거리)`;
+      msg.textContent = (l.miss ? `'${l.miss}'는 없는 주소예요 · ` : '') + (freeOnly && near.length && near[0].d > 2 ? `${l.name} 2 km 안에는 무료 공영주차장이 없어요 · 가장 가까운 ${near.length}곳 (직선거리)` : `${l.name} 근처 ${freeOnly ? '무료 ' : ''}주차장 ${near.length}곳 (직선거리)`);
       show(near.map(({ l: x, d }) => card(x, ` · ${l.name}에서 ${fmtKm(d)}`)).join(''));
       bringIntoView(msg);  // the '… N곳' line explains the list (esp. '2 km 안에는 없어요') — keep it on screen above the cards
       return;
@@ -124,7 +161,7 @@
     if (menu.hidden) return;
     if (e.key === 'ArrowDown') { active = Math.min(active + 1, items.length - 1); open(input.value); e.preventDefault(); }
     else if (e.key === 'ArrowUp') { active = Math.max(active - 1, 0); open(input.value); e.preventDefault(); }
-    else if (e.key === 'Enter') { const it = items[active >= 0 ? active : 0]; if (it) choose(it); e.preventDefault(); }
+    else if (e.key === 'Enter') { const it = items[active >= 0 ? active : 0]; if (it) choose(it); else if (addrTimer && looksAddr(input.value)) autoPick = input.value.trim().replace(/\s+/g, ' '); e.preventDefault(); }  // Enter on a pending address: take the first match when it lands
     else if (e.key === 'Escape') close();
   });
   menu.addEventListener('mousedown', e => { const li = e.target.closest('li[data-i]'); if (li) { choose(items[+li.dataset.i]); e.preventDefault(); } });
@@ -133,7 +170,7 @@
   if (scope) scope.addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
     freeOnly = b.dataset.free === '1'; scope.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b));
-    scopeHint.hidden = !freeOnly; input.placeholder = freeOnly ? '예: 강남역, 역삼동, 해운대' : ph;
+    scopeHint.hidden = !freeOnly; input.placeholder = freeOnly ? '예: 강남역, 역삼동, 테헤란로 152' : ph;
     if (lastStation) choose(lastStation);  // a station list on screen re-filters in place
     else if (!menu.hidden || document.activeElement === input) open(input.value);
   });
