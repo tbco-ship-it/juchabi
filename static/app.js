@@ -45,7 +45,7 @@
   function card(l, extra = '') {
     const c1 = cost(l, 60), c2 = cost(l, 120), c3 = cost(l, 180);
     const cls = l.fee === '무료' ? 'balanced' : (c1 == null ? 'quiet' : '');
-    const head = l.fee === '무료' ? '무료' : (c1 == null ? l.fee : won(c1));
+    const head = l.fee === '무료' ? '무료' : (c1 == null ? '요금 확인 필요' : won(c1));
     const sub = l.fee === '무료' ? '' : (c1 == null ? '' : '1시간');
     const line = l.fee === '무료' ? `무료 주차장${l.fo ? ' · 무료 개방 문구 있음' : ''}${l.spaces ? ` · ${l.spaces}면` : ''}` : `${feeLine(l)}${c2 != null ? ` · 2시간 ${won(c2)}` : ''}${c3 != null ? ` · 3시간 ${won(c3)}` : ''}${l.day ? ` · 일주차 ${won(l.day)}` : ''}${l.month ? ` · 월정기 ${won(l.month)}` : ''}`;
     return `<section class="sheet ${cls}"><p class="sheet-label">${l.sido} ${l.sigungu}${l.loc ? ' ' + l.loc : ''}${extra}</p><div class="sheet-num"><span class="num${head.length > 6 ? ' small-num' : ''}">${head}</span>${sub ? `<span class="pct">${sub}</span>` : ''}</div><p class="sheet-title">${l.name}</p><p class="sheet-text">${line}</p><p class="sheet-actions"><a class="next" href="${base}${l.path.split('/').map(encodeURIComponent).join('/')}">요금표·감면·운영시간</a>${l.lat ? `<a class="next" href="https://map.naver.com/p/search/${encodeURIComponent(l.name + ' ' + l.sigungu)}" target="_blank" rel="noopener">네이버 지도</a>` : ''}</p></section>`;
