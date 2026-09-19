@@ -658,3 +658,6 @@ a{color:var(--link)}
 .next:first-child:not(:only-child),.next:only-child,.next.geo,#geo{background:var(--action-bg);color:var(--action-fg)}
 .next:first-child:not(:only-child):hover,.next:only-child:hover,.next.geo:hover,#geo:hover{background:#155ac0;color:#fff}
 #dur button:disabled{opacity:.45;cursor:not-allowed;box-shadow:none}
+.geo-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}.geo-row .next{width:100%;justify-content:center}
+.next.geo-free{background:var(--surface-2);color:var(--text)}.next.geo-free:hover{background:var(--surface-2);color:var(--text)}
+@media (max-width:420px){.geo-row{grid-template-columns:1fr}}

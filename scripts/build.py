@@ -181,7 +181,8 @@ def main():
     items = [[l["name"], sido_idx[l["sido_slug"]], l["sigungu"], l["locality"], 0 if l["slug"] == re.sub(r"\s+", "", l["name"]) else l["slug"], r5(l["lat"]), r5(l["lng"]), {"무료": 0, "유료": 1}.get(l["fee"], 2),
               l["basic_min"], l["basic_won"], l["add_min"], l["add_won"], l["day_won"], l["month_won"], 1 if l["free_open"] else 0, l["spaces"],
               [l["costs"][hh] for hh in HOURS]] for l in lots]  # index 16: precomputed 1/2/3/5/8h — JS never recomputes
-    payload = json.dumps({"sidos": sido_list, "items": items}, ensure_ascii=False, separators=(",", ":"))
+    stations = json.loads((ROOT / "data/stations.json").read_text())["stations"]  # [name, lat, lng] — "거제역" searches resolve to the station, then the nearest lots
+    payload = json.dumps({"sidos": sido_list, "items": items, "stations": stations}, ensure_ascii=False, separators=(",", ":"))
     (DIST / "static/index.json").write_text(payload)
     env.globals["index_v"] = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]  # cache key from the index itself, not from CSS edits
 

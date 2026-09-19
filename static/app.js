@@ -30,7 +30,11 @@
   const norm = s => (s || '').toLowerCase().replace(/\s+/g, '');
   // Loading state: the 2 MB index takes a moment on mobile — say so, and offer a retry / region browse on failure.
   const ph = input.placeholder; input.placeholder = '목록 준비 중… 먼저 입력할 수 있어요'; geoBtn.disabled = true;
-  let D;
+  let D, ST = [];
+  const dist = (la, lo) => l => { const dLat = (l.lat - la) * Math.PI / 180, dLng = (l.lng - lo) * Math.PI / 180; const a = Math.sin(dLat / 2) ** 2 + Math.cos(la * Math.PI / 180) * Math.cos(l.lat * Math.PI / 180) * Math.sin(dLng / 2) ** 2; return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); };
+  const fmtKm = d => d < 1 ? Math.round(d * 1000) + ' m' : d.toFixed(1) + ' km';
+  // nearest lots to a point (station or GPS); freeOnly keeps 무료 lots
+  const nearest = (la, lo, freeOnly, n = 5) => { const dd = dist(la, lo); return D.filter(l => l.lat && (!freeOnly || l.fee === '무료')).map(l => ({ l, d: dd(l) })).sort((a, b) => a.d - b.d).slice(0, n); };
   async function fetchIndex(url) {  // a stalled request must not leave the search dead: abort after 8 s and fall into the retry path
     const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 8000);
     try { const r = await fetch(url, { signal: controller.signal }); if (!r.ok) throw new Error('HTTP ' + r.status); return await r.json(); }
@@ -38,7 +42,7 @@
   }
   for (let attempt = 0; ; attempt++) {
     try {
-      const IDX = await fetchIndex(input.dataset.indexSrc || (base + 'static/index.json?v=' + v)); D = IDX.items.map(L(IDX.sidos)); break;
+      const IDX = await fetchIndex(input.dataset.indexSrc || (base + 'static/index.json?v=' + v)); D = IDX.items.map(L(IDX.sidos)); ST = (IDX.stations || []).map(a => ({ kind: 'station', name: a[0], lat: a[1], lng: a[2], q: a[0].replace(/\s+/g, '') })); break;
     } catch (e) {
       if (attempt < 2) { await new Promise(r => setTimeout(r, 1200 * (attempt + 1))); continue; }
       input.placeholder = '목록을 못 불러왔어요'; const msg = $('geo-msg'); msg.hidden = false; msg.innerHTML = '주차장 목록을 불러오지 못했습니다. <a href="#" id="retry">다시 시도</a>하거나 <a href="' + base + 'regions/">지역별로 찾기</a>.';
@@ -57,8 +61,11 @@
   let items = [], active = -1;
   function open(q) {
     const terms = q.trim().split(/\s+/).map(norm).filter(Boolean);  // '서울 가산동' → both terms must match
-    items = terms.length ? D.filter(l => terms.every(t => l.q.includes(t))).slice(0, 8) : [];
-    menu.innerHTML = items.length ? items.map((l, i) => `<li id="q-option-${i}" role="option" data-i="${i}" aria-selected="${i === active}">${l.name}<small class="muted"> ${l.sido} ${l.sigungu}${l.loc ? ' ' + l.loc : ''} · ${l.fee === '무료' ? '무료' : (cost(l, 60) != null ? '1시간 ' + won(cost(l, 60)) : l.fee)}</small></li>`).join('') : (nq ? '<li class="empty">이 이름의 공영주차장이 없어요. 동네나 역 이름으로도 찾아보세요.</li>' : '<li class="empty">주차장 이름, 동네, 역 이름을 입력하세요.</li>');
+    const nq = norm(q);
+    // a station name ("거제역", "수원") puts "근처 주차장" first — the lot named 거제 in 거제시 is not what a Busan commuter means
+    const stations = nq.length >= 2 ? ST.filter(s => s.q === nq || s.q === nq + '역' || (nq.endsWith('역') && s.q.startsWith(nq))).slice(0, 2) : [];
+    items = terms.length ? [...stations, ...D.filter(l => terms.every(t => l.q.includes(t))).slice(0, 8 - stations.length)] : [];
+    menu.innerHTML = items.length ? items.map((l, i) => l.kind === 'station' ? `<li id="q-option-${i}" role="option" data-i="${i}" aria-selected="${i === active}">${l.name} 근처 주차장<small class="muted"> 역 기준 가까운 순</small></li>` : `<li id="q-option-${i}" role="option" data-i="${i}" aria-selected="${i === active}">${l.name}<small class="muted"> ${l.sido} ${l.sigungu}${l.loc ? ' ' + l.loc : ''} · ${l.fee === '무료' ? '무료' : (cost(l, 60) != null ? '1시간 ' + won(cost(l, 60)) : l.fee)}</small></li>`).join('') : (nq ? '<li class="empty">이 이름의 공영주차장이 없어요. 동네나 역 이름으로도 찾아보세요.</li>' : '<li class="empty">주차장 이름, 동네, 역 이름을 입력하세요.</li>');
     menu.hidden = false; input.setAttribute('aria-expanded', 'true');
     const option = active >= 0 ? $(`q-option-${active}`) : null;
     if (option) { input.setAttribute('aria-activedescendant', option.id); option.scrollIntoView({ block: 'nearest' }); } else input.removeAttribute('aria-activedescendant');
@@ -85,7 +92,16 @@
   }
   let userIntent = 0;  // a late GPS answer must not replace what the user searched/picked meanwhile
   function choose(l) {
-    ++userIntent; input.value = l.name; close(); show(card(l)); localStorage.setItem('juchabi.lot', l.path);
+    ++userIntent;
+    if (l.kind === 'station') {
+      input.value = l.name; close();
+      const near = nearest(l.lat, l.lng, false, 6);
+      const msg = $('geo-msg'); msg.hidden = false; msg.textContent = `${l.name} 근처 주차장 ${near.length}곳 (직선거리)`;
+      show(near.map(({ l: x, d }) => card(x, ` · ${l.name}에서 ${fmtKm(d)}`)).join(''));
+      if (innerWidth < 900) setTimeout(() => out.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' }), 60);
+      return;
+    }
+    input.value = l.name; close(); show(card(l)); localStorage.setItem('juchabi.lot', l.path);
     // On a phone the result sits below the form: bring the price into view (not for GPS lists — the user didn't pick one).
     if (innerWidth < 900) setTimeout(() => out.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' }), 60);
   }
@@ -102,21 +118,22 @@
   menu.addEventListener('mousedown', e => { const li = e.target.closest('li[data-i]'); if (li) { choose(items[+li.dataset.i]); e.preventDefault(); } });
   input.addEventListener('blur', () => setTimeout(close, 120));
 
-  const geoIdle = geoBtn.textContent;
-  const busy = on => { geoBtn.disabled = on; geoBtn.classList.toggle('busy', on); geoBtn.textContent = on ? '위치를 확인하는 중…' : geoIdle; };
-  geoBtn.addEventListener('click', () => {
+  const freeBtn = $('geo-free');
+  const idle = { geo: geoBtn.textContent, free: freeBtn ? freeBtn.textContent : '' };
+  const busy = (btn, on) => { for (const b of [geoBtn, freeBtn]) if (b) { b.disabled = on; b.classList.toggle('busy', on && b === btn); } btn.textContent = on ? '위치를 확인하는 중…' : (btn === geoBtn ? idle.geo : idle.free); };
+  const locate = (btn, freeOnly) => {
     const msg = $('geo-msg'); msg.hidden = true;
     if (!navigator.geolocation) { msg.hidden = false; msg.textContent = '이 브라우저는 위치를 지원하지 않아요. 이름으로 찾아 주세요.'; return; }
-    busy(true); const ticket = ++userIntent;
+    busy(btn, true); const ticket = ++userIntent;
     navigator.geolocation.getCurrentPosition(pos => {
-      busy(false); if (ticket !== userIntent) return; msg.hidden = false;
-      const { latitude: la, longitude: lo } = pos.coords;
-      const dist = l => { const dLat = (l.lat - la) * Math.PI / 180, dLng = (l.lng - lo) * Math.PI / 180; const a = Math.sin(dLat / 2) ** 2 + Math.cos(la * Math.PI / 180) * Math.cos(l.lat * Math.PI / 180) * Math.sin(dLng / 2) ** 2; return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); };
-      const near = D.filter(l => l.lat).map(l => ({ l, d: dist(l) })).sort((a, b) => a.d - b.d).slice(0, 5);
-      msg.textContent = `가까운 공영주차장 ${near.length}곳`;
-      show(near.map(({ l, d }) => card(l, ` · ${d < 1 ? Math.round(d * 1000) + ' m' : d.toFixed(1) + ' km'}`)).join(''));
-    }, () => { busy(false); if (ticket !== userIntent) return; msg.hidden = false; msg.textContent = '위치 권한이 없어요. 이름으로 찾아 주세요.'; }, { timeout: 8000 });
-  });
+      busy(btn, false); if (ticket !== userIntent) return; msg.hidden = false;
+      const near = nearest(pos.coords.latitude, pos.coords.longitude, freeOnly, 5);
+      msg.textContent = freeOnly ? `가까운 무료 주차장 ${near.length}곳 (직선거리)` : `가까운 주차장 ${near.length}곳 (직선거리)`;
+      show(near.map(({ l, d }) => card(l, ` · ${fmtKm(d)}`)).join(''));
+    }, () => { busy(btn, false); if (ticket !== userIntent) return; msg.hidden = false; msg.textContent = '위치 권한이 없어요. 이름으로 찾아 주세요.'; }, { timeout: 8000 });
+  };
+  geoBtn.addEventListener('click', () => locate(geoBtn, false));
+  if (freeBtn) freeBtn.addEventListener('click', () => locate(freeBtn, true));
   if (input.value.trim() || document.activeElement === input) open(input.value);  // typed while the index was loading
   const remembered = D.find(l => l.path === localStorage.getItem('juchabi.lot'));
   if (remembered) { $('last-name').textContent = remembered.name; $('last').hidden = false; $('last').addEventListener('click', () => choose(remembered)); }

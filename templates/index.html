@@ -12,11 +12,11 @@
 <section class="calc-grid">
 <div class="calc card" id="calc">
   <h2 class="card-title">주차장 찾기</h2>
-  <label class="field">주차장 이름 또는 동네
+  <label class="field">주차장 이름, 동네 또는 역
     <input id="q" class="pick search" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="q-menu" autocomplete="off" placeholder="예: 강남역, 수원역 환승, 해운대" data-kind="lots" data-index-src="{{ base }}static/index.json?v={{ index_v }}"><ul class="menu" id="q-menu" role="listbox" hidden></ul>
   </label>
   <div class="field"><span class="field-label">또는</span>
-    <button id="geo" class="next geo" type="button">내 위치 근처 공영주차장</button>
+    <div class="geo-row"><button id="geo" class="next geo" type="button">내 위치 근처 주차장</button><button id="geo-free" class="next geo geo-free" type="button">내 근처 무료주차장</button></div>
     <p id="geo-msg" class="muted small" hidden></p>
   </div>
   <p class="muted small">유료 주차장은 요금표로, 무료 주차장은 운영시간으로 보여드립니다.</p>
