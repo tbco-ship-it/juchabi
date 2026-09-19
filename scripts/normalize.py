@@ -183,7 +183,13 @@ def merge_seoul(lots):
         if cands:
             l = cands[0]
             if l.get("seoul_code"):
-                continue  # 노상 구간마다 코드가 따로 온다 (망원 11개) — 첫 구간의 속성만 쓴다
+                # 노상 구간마다 코드가 따로 온다 (망원 11개) — 첫 구간이 비워 둔 값만 뒷 구간에서 채운다
+                for k in ("day_max_won",):
+                    if not l.get(k) and extra[k]:
+                        l[k] = extra[k]
+                if not l["month_won"] and to_int(r.get("MNTL_CMUT_CRG")):
+                    l["month_won"] = to_int(r.get("MNTL_CMUT_CRG"))
+                continue
             taken.add(id(l))
             l.update(extra)
             if not l["month_won"] and to_int(r.get("MNTL_CMUT_CRG")):
