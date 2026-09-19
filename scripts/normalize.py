@@ -114,6 +114,128 @@ def slugify_ko(name):
     return s or "주차장"
 
 
+def _hhmm4(v):
+    v = (v or "").strip()
+    return f"{v[:2]}:{v[2:]}" if re.fullmatch(r"\d{4}", v) else ""
+
+
+def _nk(name):
+    """'압구정 428 공영주차장(구)' → '압구정428' — the key the Seoul API and the 구청 rows share."""
+    s = re.sub(r"\((구|시|공단|시설공단|무인|건축물식)\)", "", name or "")
+    s = re.sub(r"공영주차장|공영|주차장|노상|노외|관광버스전용|유료|무인", "", s)
+    s = re.sub(r"초교", "초", s)
+    return re.sub(r"[\s()（）\-·,.]", "", s)
+
+
+def _loose_match(key, gu, pool, taken):
+    """Fallback for name variants ('청암' ↔ '청암(무인)', '화곡6동 방죽길' ↔ '방죽길'): one side's key contains the other's,
+    the candidate is in the same 구, not yet matched, and the containment is unique — otherwise no match."""
+    if len(key) < 2:
+        return None
+    hits = [l for l in pool if l["sigungu"] == gu and id(l) not in taken
+            and len(_nk(l["name"])) >= 2 and (key in _nk(l["name"]) or _nk(l["name"]) in key)]
+    return hits[0] if len(hits) == 1 else None
+
+
+def _addr_key(addr):
+    """'강남구 압구정동 428-0' / '서울특별시 강남구 압구정동 428(…)' → ('강남구', '압구정동', '428'); 723-8 stays '723-8' (723-7 next door is another lot)."""
+    a = re.sub(r"\(.*?\)", "", addr or "").replace("서울특별시", "").strip()
+    m = re.search(r"(\S+구)\s+(\S+[동가로])\s+(\d+)(?:-(\d+))?", a)
+    if not m:
+        return None
+    sub = m.group(4) or "0"
+    return (m.group(1), m.group(2), m.group(3) if sub == "0" else f"{m.group(3)}-{sub}")
+
+
+def merge_seoul(lots):
+    """서울열린데이터광장 GetParkInfo (data/raw/seoul_parkinfo_*.json): 848 public lots, most already in the standard set.
+    Matched lots gain Saturday/holiday-free flags, daily cap, monthly ticket and the realtime code; unmatched ones are added
+    as new lots (fee fields mapped, coordinates only where the API has them)."""
+    files = sorted((ROOT / "data/raw").glob("seoul_parkinfo_*.json"))
+    if not files:
+        return
+    rows = json.loads(files[-1].read_text())["rows"]
+    fetched = files[-1].stem.split("_")[-1]
+    by_code = {}
+    for r in rows:
+        by_code.setdefault(r["PKLT_CD"], r)
+    seoul = [l for l in lots if l["sido"] == "서울특별시"]
+    by_name = defaultdict(list)
+    by_addr = defaultdict(list)
+    for l in seoul:
+        by_name[(l["sigungu"], _nk(l["name"]))].append(l)
+        k = _addr_key(l["addr"])
+        if k:
+            by_addr[k].append(l)
+    matched = loose = added = sections = 0
+    taken = set()
+    new_by_key = {}
+    for r in by_code.values():
+        gu = (r["ADDR"] or "").split()[0] if r.get("ADDR") else ""
+        cands = by_name.get((gu, _nk(r["PKLT_NM"]))) or by_addr.get(_addr_key(r["ADDR"]) or ("", "", "")) or []
+        if not cands:
+            hit = _loose_match(_nk(r["PKLT_NM"]), gu, seoul, taken)
+            if hit:
+                cands, loose = [hit], loose + 1
+        extra = {"sat_free": r.get("SAT_CHGD_FREE_SE") == "N", "hol_free": r.get("LHLDY_YN") == "N", "night_free": r.get("NGHT_FREE_OPN_YN") == "Y",
+                 "day_max_won": int(r["DLY_MAX_CRG"]) if (r.get("DLY_MAX_CRG") or 0) > 0 else None,
+                 "seoul_code": r["PKLT_CD"], "seoul_realtime": r.get("PRK_NOW_INFO_PVSN_YN") == "1", "seoul_sync": (r.get("LAST_DATA_SYNC_TM") or "")[:10]}
+        if cands:
+            l = cands[0]
+            if l.get("seoul_code"):
+                continue  # 노상 구간마다 코드가 따로 온다 (망원 11개) — 첫 구간의 속성만 쓴다
+            taken.add(id(l))
+            l.update(extra)
+            if not l["month_won"] and to_int(r.get("MNTL_CMUT_CRG")):
+                l["month_won"] = to_int(r.get("MNTL_CMUT_CRG"))
+            matched += 1
+            continue
+        nkey = (gu, _nk(r["PKLT_NM"]))
+        if nkey in new_by_key:
+            prev = new_by_key[nkey]
+            if (r.get("TPKCT") or 0) > 0:
+                prev["spaces"] = (prev["spaces"] or 0) + int(r["TPKCT"])
+            sections += 1
+            continue
+        try:
+            lat, lng = float(r.get("LAT") or 0), float(r.get("LOT") or 0)
+            if not (33 <= lat <= 39 and 124 <= lng <= 132):
+                lat = lng = None
+        except ValueError:
+            lat = lng = None
+        m = re.match(r"^(\S+구)", r["ADDR"] or "")
+        if not m:
+            continue
+        paid = r.get("CHGD_FREE_SE") != "N"
+        basic_won = int(r["PRK_CRG"]) if paid and (r.get("PRK_CRG") or 0) > 0 else None
+        basic_min = int(r["PRK_HM"]) if paid and (r.get("PRK_HM") or 0) > 0 else None
+        add_won = int(r["ADD_CRG"]) if paid and (r.get("ADD_CRG") or 0) > 0 else None
+        add_min = int(r["ADD_UNIT_TM_MNT"]) if paid and (r.get("ADD_UNIT_TM_MNT") or 0) > 0 else None
+        notes = []
+        if extra["sat_free"]: notes.append("토요일 무료")
+        if extra["hol_free"]: notes.append("공휴일 무료")
+        if extra["night_free"]: notes.append("야간 무료개방")
+        new_by_key[nkey] = {
+            "id": f"seoul-{r['PKLT_CD']}", "name": re.sub(r"\s*\((구|시)\)$", "", re.sub(r"\s+", " ", r["PKLT_NM"]).strip()), "kind": "공영",
+            "type": "노상" if r.get("PKLT_KND") == "NS" or "노상" in (r.get("PKLT_KND_NM") or "") else "노외",
+            "addr": "서울특별시 " + (r["ADDR"] or "").strip(), "sido": "서울특별시", "sido_slug": SIDO["서울특별시"][0], "sigungu": m.group(1), "gu": "",
+            "spaces": int(r["TPKCT"]) if (r.get("TPKCT") or 0) > 0 else None, "grade": "", "rotation": "",
+            "oper_day": "평일+토요일+공휴일",
+            "hours": {"weekday": [_hhmm4(r.get("WD_OPER_BGNG_TM")), _hhmm4(r.get("WD_OPER_END_TM"))], "sat": [_hhmm4(r.get("WE_OPER_BGNG_TM")), _hhmm4(r.get("WE_OPER_END_TM"))], "holiday": [_hhmm4(r.get("LHLDY_BGNG")), _hhmm4(r.get("LHLDY"))]},
+            "fee": "유료" if paid else "무료", "basic_min": basic_min, "basic_won": basic_won, "add_min": add_min, "add_won": add_won,
+            "day_hours": None, "day_won": None, "month_won": to_int(r.get("MNTL_CMUT_CRG")),
+            "hourly_review": False, "daily_review": False, "monthly_review": False, "fee_review": False, "fee_raw": {},
+            "pay": "", "note": " / ".join(notes), "discounts": {}, "free_open": "야간 무료개방" if extra["night_free"] else "",
+            "org": "서울시설공단" if "(시)" in r["PKLT_NM"] else f"서울특별시 {m.group(1)}", "phone": (r.get("TELNO") or "").strip(), "lat": lat, "lng": lng,
+            "disabled_zone": False, "ref_date": extra["seoul_sync"] or fetched, "provider": "서울열린데이터광장 (서울시 공영주차장 안내 정보)",
+            **extra,
+        }
+        lots.append(new_by_key[nkey])
+        added += 1
+    print(f"seoul merge: {matched} lots matched (attributes added; {loose} via loose name containment), {added} new lots "
+          f"({sections} extra 노상 sections folded into them) from {len(by_code)} unique codes")
+
+
 def main():
     raws = sorted((ROOT / "data/raw").glob("parking_*.json"))
     src = raws[-1]
@@ -185,6 +307,7 @@ def main():
             "org": r["INSTITUTION_NM"].strip(), "phone": r["PHONE_NUMBER"].strip(), "lat": lat, "lng": lng,
             "disabled_zone": r["PWDBS_PPK_ZONE_YN"].strip() == "Y", "ref_date": r["REFERENCE_DATE"].strip(), "provider": r["INSTT_NM"].strip(),
         })
+    merge_seoul(lots)
     # slugs unique within 시군구
     by_key = defaultdict(list)
     for l in lots:

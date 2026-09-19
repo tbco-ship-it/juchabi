@@ -54,6 +54,8 @@ def cost(l, minutes):
         return None
     if not l.get("daily_review", False) and l["day_won"] and (not l["day_hours"] or l["day_hours"] >= 24 or minutes <= l["day_hours"] * 60):
         total = min(total, l["day_won"])
+    if l.get("day_max_won"):
+        total = min(total, l["day_max_won"])  # 서울시 API의 1일 최대요금 (일주차권과 별개)
     return total
 
 
