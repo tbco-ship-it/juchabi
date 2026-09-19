@@ -649,3 +649,12 @@ header.top nav a{flex:none}
 .sheet-num{flex-wrap:wrap}
 #fee-for{font-size:18px}
 #result{scroll-margin-top:calc(var(--hdr,64px) + 16px)}
+/* Review R2 2026-09-19: list rows use the full width for the rule line; accessible link/button colours; disabled hour buttons */
+.list.fee a{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"name price" "rule rule";gap:4px 12px}
+.list.fee .nm{grid-area:name;min-width:0}.list.fee .meta{grid-area:price}.list.fee .rule{grid-area:rule;margin:0;overflow-wrap:anywhere}
+:root{--link:#155ac0;--action-bg:#1b64da;--action-fg:#fff}
+@media (prefers-color-scheme:dark){:root{--link:#8cbbff}}
+a{color:var(--link)}
+.next:first-child:not(:only-child),.next:only-child,.next.geo,#geo{background:var(--action-bg);color:var(--action-fg)}
+.next:first-child:not(:only-child):hover,.next:only-child:hover,.next.geo:hover,#geo:hover{background:#155ac0;color:#fff}
+#dur button:disabled{opacity:.45;cursor:not-allowed;box-shadow:none}

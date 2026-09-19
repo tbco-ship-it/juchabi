@@ -11,6 +11,7 @@ import shutil
 from xml.sax.saxutils import escape
 from collections import defaultdict, Counter
 from pathlib import Path
+from statistics import median
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -26,15 +27,17 @@ HOURS = [1, 2, 3, 5, 8]
 
 
 def won(n):
-    return f"{n:,}원" if isinstance(n, int) else "—"
+    if not isinstance(n, (int, float)) or isinstance(n, bool) or not math.isfinite(n):
+        return "—"
+    return (f"{n:,.0f}" if n == int(n) else f"{n:,.1f}") + "원"
 
 
 def cost(l, minutes):
     """Fee for `minutes` under the reported 기본시간/기본요금/추가단위 rule; None when the lot has no usable rule."""
     if l["fee"] == "무료":
         return 0
-    if l.get("fee_review"):
-        return None  # 복합·소수 요금은 원문 보존, 계산 보류
+    if l.get("hourly_review", l.get("fee_review", False)):
+        return None  # 복합·소수 시간요금은 원문 보존, 계산 보류 (일·월권만 복합인 곳은 시간요금을 계산한다)
     b_min, b_won, a_min, a_won = l["basic_min"], l["basic_won"], l["add_min"], l["add_won"]
     if not b_won and not a_won:
         return None  # 유료인데 금액이 0/공란 → 미기재
@@ -49,9 +52,34 @@ def cost(l, minutes):
         return None  # 기본요금만 있고 초과 규칙이 없다
     else:
         return None
-    if l["day_won"] and (not l["day_hours"] or l["day_hours"] >= 24 or minutes <= l["day_hours"] * 60):
+    if not l.get("daily_review", False) and l["day_won"] and (not l["day_hours"] or l["day_hours"] >= 24 or minutes <= l["day_hours"] * 60):
         total = min(total, l["day_won"])
     return total
+
+
+def make_nearby(lots):
+    """Straight-line neighbours within 2 km from a 0.03° grid — crosses 시군구 borders (청계7 종로구 ↔ 청계8가 중구 is 72 m)."""
+    buckets = defaultdict(list)
+    cell = lambda x: (math.floor(x["lat"] / 0.03), math.floor(x["lng"] / 0.03))
+    for x in lots:
+        if x["lat"] is not None and x["lng"] is not None:
+            buckets[cell(x)].append(x)
+
+    def find(l):
+        if l["lat"] is None or l["lng"] is None:
+            return []
+        cy, cx = cell(l)
+        cand = []
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                for x in buckets.get((cy + dy, cx + dx), []):
+                    if x is l:
+                        continue
+                    km = math.hypot((x["lat"] - l["lat"]) * 111, (x["lng"] - l["lng"]) * 88)
+                    if km <= 2:
+                        cand.append((km, x))
+        return sorted(cand, key=lambda t: t[0])[:6]
+    return find
 
 
 def fee_line(l):
@@ -118,7 +146,7 @@ def main():
         paid = [l for l in lst if l["fee"] != "무료"]
         free = [l for l in lst if l["fee"] == "무료"]
         h1 = sorted(c for c in (l["costs"][1] for l in paid) if c is not None)  # 첫 1시간 0원도 값이다
-        return {"n": len(lst), "free": len(free), "paid": len(paid), "h1_med": h1[len(h1) // 2] if h1 else None,
+        return {"n": len(lst), "free": len(free), "paid": len(paid), "h1_med": median(h1) if h1 else None, "h1_n": len(h1),
                 "monthly": len([l for l in lst if l["month_won"]]), "free_open": len([l for l in lst if l["free_open"]]),
                 "disc": Counter(k for l in lst for k in l["discounts"]).most_common(4),
                 "latest": max((l["ref_date"] for l in lst), default="")}
@@ -153,7 +181,9 @@ def main():
     items = [[l["name"], sido_idx[l["sido_slug"]], l["sigungu"], l["locality"], 0 if l["slug"] == re.sub(r"\s+", "", l["name"]) else l["slug"], r5(l["lat"]), r5(l["lng"]), {"무료": 0, "유료": 1}.get(l["fee"], 2),
               l["basic_min"], l["basic_won"], l["add_min"], l["add_won"], l["day_won"], l["month_won"], 1 if l["free_open"] else 0, l["spaces"],
               [l["costs"][hh] for hh in HOURS]] for l in lots]  # index 16: precomputed 1/2/3/5/8h — JS never recomputes
-    (DIST / "static/index.json").write_text(json.dumps({"sidos": sido_list, "items": items}, ensure_ascii=False, separators=(",", ":")))
+    payload = json.dumps({"sidos": sido_list, "items": items}, ensure_ascii=False, separators=(",", ":"))
+    (DIST / "static/index.json").write_text(payload)
+    env.globals["index_v"] = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]  # cache key from the index itself, not from CSS edits
 
     urls = []
 
@@ -171,16 +201,14 @@ def main():
     cheap_month = sorted([l for l in lots if l["month_won"] and l["month_won"] >= 10000], key=lambda l: l["month_won"])
     write("guide/monthly/", "guide_monthly.html", cheap=cheap_month[:60], by_sido={s["slug"]: sorted([l for l in s["lots"] if l["month_won"] and l["month_won"] >= 10000], key=lambda l: l["month_won"])[:10] for s in sidos.values()})
     write("guide/free-open/", "guide_free.html", free_open=[l for l in lots if l["free_open"]])
+    find_nearby = make_nearby(lots)
     write("regions/", "regions.html")
     for s in sidos.values():
         write(f"{s['slug']}/", "sido.html", s=s)
         for g in s["sigungu"].values():
             write(f"{s['slug']}/{g['name']}/", "sigungu.html", s=s, g=g)
             for l in g["lots"]:
-                near = []
-                if l["lat"]:
-                    near = sorted([(math.hypot((x["lat"] - l["lat"]) * 111, (x["lng"] - l["lng"]) * 88), x) for x in g["lots"] if x is not l and x["lat"]], key=lambda t: t[0])[:6]
-                write(l["path"], "lot.html", s=s, g=g, l=l, near=near)
+                write(l["path"], "lot.html", s=s, g=g, l=l, near=find_nearby(l))
 
     # sitemap (split at 40k urls to stay well under the 50k/50MB limit)
     chunks = [urls[i:i + 40000] for i in range(0, len(urls), 40000)]

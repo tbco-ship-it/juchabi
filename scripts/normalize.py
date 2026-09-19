@@ -51,21 +51,27 @@ def split_outside_parens(s):
 
 
 def parse_discounts(note):
-    """{'light': {'pct': 50, 'text': '경차 50프로 할인'}, ...}; pct None = mentioned without a number."""
+    """{'light': {'pct': 50, 'text': '경차 50프로 할인', 'conditional': False}, ...}; pct None = mentioned but not safely computable.
+    A segment that carries several rates ('장애인 80%, 경차 50%'), a rate plus 면제, a conditional ('4시간 면제 후 50%') or a range
+    is kept as text only — the calculator must not pick the first percentage for every category in the sentence."""
     found = {}
     if not note:
         return found
     for seg in split_outside_parens(note):
-        m = PCT.search(seg)
-        pct = int(m.group(1)) if m else None
-        if pct is None and re.search(r"(무료|면제)", seg) and not re.search(r"\d+\s*시간\s*(면제|무료)", seg):
+        rates = {int(m.group(1)) for m in PCT.finditer(seg)}
+        pct = next(iter(rates)) if len(rates) == 1 else None
+        if not rates and FREE.search(seg):
             pct = 100
-        # '4시간 면제 후 50%' 같은 조건부 감면은 단순 %로 계산하면 틀린다 → pct 없이 원문만 (계산기 버튼 안 만듦)
-        simple = pct is not None and not CONDITIONAL.search(seg)
+        ambiguous = len(rates) > 1 or bool(rates and FREE.search(seg)) or bool(CONDITIONAL.search(seg)) or bool(re.search(r"\d+\s*[~∼–-]\s*\d+", seg))
+        if ambiguous or pct is None or not 0 < pct <= 100:
+            pct = None
         for key, _label, rx in CATS:
-            if re.search(rx, seg):
-                if key not in found or (found[key]["pct"] is None and simple):
-                    found[key] = {"pct": pct if simple else None, "text": seg, "conditional": not simple}
+            if not re.search(rx, seg):
+                continue
+            old = found.get(key)
+            text = seg if old is None else old["text"] + " / " + seg
+            value = pct if old is None or old["pct"] == pct else None
+            found[key] = {"pct": value, "text": text, "conditional": value is None}
     return found
 
 
@@ -92,8 +98,13 @@ def to_int(v):
     return int(v.replace(",", "")) if INTEGER.match(v) else None
 
 
-def fee_needs_review(r):
-    return any((r[k] or "").strip() and to_int(r[k]) is None for k in ("BASIC_TIME", "BASIC_CHARGE", "ADD_UNIT_TIME", "ADD_UNIT_CHARGE", "DAY_CMMTKT_ADJ_TIME", "DAY_CMMTKT", "MONTH_CMMTKT"))
+def fee_reviews(r):
+    """Compound fee text ('150+300', '0.5') blocks only the calculation that needs it: hourly, day ticket, monthly ticket."""
+    groups = {"hourly_review": ("BASIC_TIME", "BASIC_CHARGE", "ADD_UNIT_TIME", "ADD_UNIT_CHARGE"), "daily_review": ("DAY_CMMTKT_ADJ_TIME", "DAY_CMMTKT"), "monthly_review": ("MONTH_CMMTKT",)}
+    invalid = lambda k: bool((r.get(k) or "").strip()) and to_int(r.get(k)) is None
+    checks = {name: any(invalid(k) for k in fields) for name, fields in groups.items()}
+    fields = [k for group in groups.values() for k in group]
+    return {**checks, "fee_review": any(checks.values()), "fee_raw": {k: r[k] for k in fields if invalid(k)}}
 
 
 def slugify_ko(name):
@@ -169,7 +180,7 @@ def main():
             "fee": fee, "basic_min": to_int(r["BASIC_TIME"]), "basic_won": to_int(r["BASIC_CHARGE"]),
             "add_min": to_int(r["ADD_UNIT_TIME"]), "add_won": to_int(r["ADD_UNIT_CHARGE"]),
             "day_hours": to_int(r["DAY_CMMTKT_ADJ_TIME"]), "day_won": to_int(r["DAY_CMMTKT"]), "month_won": to_int(r["MONTH_CMMTKT"]),
-            "fee_review": fee_needs_review(r), "fee_raw": {k: r[k] for k in ("BASIC_TIME", "BASIC_CHARGE", "ADD_UNIT_TIME", "ADD_UNIT_CHARGE", "DAY_CMMTKT") if r[k] and to_int(r[k]) is None},
+            **fee_reviews(r),
             "pay": r["METPAY"].strip(), "note": note, "discounts": parse_discounts(note), "free_open": free_open(note),
             "org": r["INSTITUTION_NM"].strip(), "phone": r["PHONE_NUMBER"].strip(), "lat": lat, "lng": lng,
             "disabled_zone": r["PWDBS_PPK_ZONE_YN"].strip() == "Y", "ref_date": r["REFERENCE_DATE"].strip(), "provider": r["INSTT_NM"].strip(),
