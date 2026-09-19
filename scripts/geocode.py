@@ -1,0 +1,61 @@
+"""좌표 없는 주차장 주소 → VWorld 지오코더(국토부, 무료) → data/geocode_cache.json {addr: {lat, lng, matched, type}}.
+normalize.py가 캐시를 읽어 lat/lng가 비어 있는 lot을 채운다 (provider는 그대로, geo_source='vworld' 표시).
+
+  VWORLD_API_KEY=... ../martday/.venv/bin/python scripts/geocode.py
+
+지번(parcel) → 도로명(road) 순으로 시도; 실패한 주소도 캐시에 null로 남겨 재호출하지 않는다.
+전남광주통합특별시(표준데이터 표기)는 VWorld가 모르므로 광주 5개 구는 광주광역시, 나머지는 전라남도로 바꿔 묻는다.
+"""
+import json, os, re, sys, time, urllib.parse, urllib.request
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+KEY = os.environ.get("VWORLD_API_KEY")
+if not KEY:
+    sys.exit("VWORLD_API_KEY missing")
+CACHE = ROOT / "data/geocode_cache.json"
+cache = json.loads(CACHE.read_text()) if CACHE.exists() else {}
+GWANGJU_GU = {"동구", "서구", "남구", "북구", "광산구"}
+
+
+def query_addr(addr):
+    a = re.sub(r"\(.*?\)", "", addr).strip()
+    a = re.sub(r"번지$", "", a).strip()
+    m = re.match(r"전남광주통합특별시\s+(\S+)", a)
+    if m:
+        a = a.replace("전남광주통합특별시", "광주광역시" if m.group(1) in GWANGJU_GU else "전라남도", 1)
+    return a
+
+
+def geocode(addr):
+    for typ in ("parcel", "road"):
+        q = urllib.parse.urlencode({"service": "address", "request": "getcoord", "version": "2.0", "crs": "epsg:4326", "address": addr,
+                                    "refine": "true", "simple": "false", "format": "json", "type": typ, "key": KEY})
+        try:
+            with urllib.request.urlopen(f"https://api.vworld.kr/req/address?{q}", timeout=20) as r:
+                res = json.load(r)["response"]
+        except Exception as e:  # network blip: leave uncached so the next run retries
+            print("ERR", addr, e)
+            return "retry"
+        if res.get("status") == "OK":
+            pt = res["result"]["point"]
+            return {"lat": round(float(pt["y"]), 6), "lng": round(float(pt["x"]), 6), "matched": res["refined"]["text"], "type": typ}
+    return None
+
+
+lots = json.loads((ROOT / "data/lots.json").read_text())["lots"]
+todo = sorted({l["addr"] for l in lots if not l["lat"] and l["addr"] not in cache})
+print(f"{len(todo)} addresses to geocode ({len(cache)} cached)")
+ok = 0
+for i, addr in enumerate(todo, 1):
+    r = geocode(query_addr(addr))
+    if r == "retry":
+        continue
+    cache[addr] = r
+    ok += bool(r)
+    if i % 50 == 0:
+        CACHE.write_text(json.dumps(cache, ensure_ascii=False, indent=0))
+        print(f"  {i}/{len(todo)} ok={ok}")
+    time.sleep(0.05)
+CACHE.write_text(json.dumps(cache, ensure_ascii=False, indent=0))
+print(f"done: {ok}/{len(todo)} resolved; cache {len(cache)} entries, {sum(1 for v in cache.values() if v)} with coords")

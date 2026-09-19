@@ -236,6 +236,40 @@ def merge_seoul(lots):
           f"({sections} extra 노상 sections folded into them) from {len(by_code)} unique codes")
 
 
+def _geo_ok(addr, hit):
+    """VWorld refine=true는 '영등포동2가 53-0'을 '영등포동4가 53-2'로도 맞춘다 — 동·리·가 토큰과 본번이 응답에 그대로 있어야 믿는다."""
+    a = re.sub(r"\(.*?\)", "", addr)
+    m = re.sub(r"\(.*?\)", "", hit["matched"]).replace(" ", "")
+    tok = re.search(r"(\S+?(?:동|리|가))\s*(\d+)", a)  # 마지막 동·리·가 어절 + 본번
+    if tok:
+        return tok.group(1) in m and tok.group(2) in m
+    road = re.search(r"(\S+?(?:로|길))\s*(\d+)", a)
+    if road:
+        return road.group(1) in m and road.group(2) in m
+    return True
+
+
+def apply_geocode(lots):
+    """scripts/geocode.py가 만든 data/geocode_cache.json으로 좌표 없는 lot을 채운다 (geo_source='vworld')."""
+    path = ROOT / "data/geocode_cache.json"
+    if not path.exists():
+        return
+    cache = json.loads(path.read_text())
+    filled = rejected = 0
+    for l in lots:
+        if l["lat"]:
+            continue
+        hit = cache.get(l["addr"])
+        if not hit:
+            continue
+        if not _geo_ok(l["addr"], hit):
+            rejected += 1
+            continue
+        l["lat"], l["lng"], l["geo_source"] = hit["lat"], hit["lng"], "vworld"
+        filled += 1
+    print(f"geocode: {filled} lots got VWorld coordinates, {rejected} fuzzy matches rejected, {sum(1 for l in lots if not l['lat'])} still without")
+
+
 def main():
     raws = sorted((ROOT / "data/raw").glob("parking_*.json"))
     src = raws[-1]
@@ -308,6 +342,7 @@ def main():
             "disabled_zone": r["PWDBS_PPK_ZONE_YN"].strip() == "Y", "ref_date": r["REFERENCE_DATE"].strip(), "provider": r["INSTT_NM"].strip(),
         })
     merge_seoul(lots)
+    apply_geocode(lots)
     # slugs unique within 시군구
     by_key = defaultdict(list)
     for l in lots:
