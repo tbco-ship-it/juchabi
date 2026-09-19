@@ -628,8 +628,9 @@ html.landing .stage{display:flex;flex-direction:column;justify-content:center;mi
 
 /* 주차비 additions */
 h1,.hero h1,.sheet-title{word-break:keep-all;overflow-wrap:anywhere}
-header.top nav{display:flex;gap:18px;overflow-x:auto;white-space:nowrap;-webkit-overflow-scrolling:touch;scrollbar-width:none;max-width:100%}
+header.top nav{display:flex;flex-wrap:nowrap;gap:18px;overflow-x:auto;white-space:nowrap;-webkit-overflow-scrolling:touch;scrollbar-width:none;max-width:100%}
 header.top nav::-webkit-scrollbar{display:none}
+header.top nav a{flex:none}
 @media(max-width:560px){header.top nav{gap:14px;margin-left:-4px;padding:2px 4px}}
 /* segmented control built from buttons (시간 · 감면) */
 .seg{gap:2px;flex-wrap:wrap;max-width:100%}
