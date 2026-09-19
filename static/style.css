@@ -664,3 +664,4 @@ a{color:var(--link)}
 
 /* <button class="next">: drop the UA outset border (shows as a pale ring on iOS dark mode) and inherit the site font; keep .next size/weight */
 button.next{appearance:none;-webkit-appearance:none;border:0;font-family:inherit;cursor:pointer}
+.scope-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.calc>.field+.scope-row{margin-top:10px}.scope-row .seg{margin-top:0}.scope-row #scope-hint{flex:1 1 200px}

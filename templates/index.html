@@ -15,6 +15,7 @@
   <label class="field">주차장 이름, 동네 또는 역
     <input id="q" class="pick search" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="q-menu" autocomplete="off" placeholder="예: 강남역, 수원역 환승, 해운대" data-kind="lots" data-index-src="{{ base }}static/index.json?v={{ index_v }}"><ul class="menu" id="q-menu" role="listbox" hidden></ul>
   </label>
+  <div class="field scope-row"><div class="seg" id="scope" role="group" aria-label="검색 범위"><button type="button" data-free="0" aria-pressed="true">전체</button><button type="button" data-free="1" aria-pressed="false">무료 주차장만</button></div><span id="scope-hint" class="muted small" hidden>목적지(역·동네)를 치면 그 근처 무료 주차장만 보여드려요.</span></div>
   <div class="field"><span class="field-label">또는</span>
     <div class="geo-row"><button id="geo" class="next geo" type="button">내 위치 근처 주차장</button><button id="geo-free" class="next geo geo-free" type="button">내 근처 무료주차장</button></div>
     <p id="geo-msg" class="muted small" hidden></p>

@@ -58,14 +58,21 @@
     const line = l.fee === '무료' ? `무료 주차장${l.fo ? ' · 무료 개방 문구 있음' : ''}${l.spaces ? ` · ${l.spaces}면` : ''}` : `${feeLine(l)}${c2 != null ? ` · 2시간 ${won(c2)}` : ''}${c3 != null ? ` · 3시간 ${won(c3)}` : ''}${l.day ? ` · 일주차 ${won(l.day)}` : ''}${l.month ? ` · 월정기 ${won(l.month)}` : ''}`;
     return `<section class="sheet ${cls}"><p class="sheet-label">${l.sido} ${l.sigungu}${l.loc ? ' ' + l.loc : ''}${extra}</p><div class="sheet-num"><span class="num${head.length > 6 ? ' small-num' : ''}">${head}</span>${sub ? `<span class="pct">${sub}</span>` : ''}</div><p class="sheet-title">${l.name}</p><p class="sheet-text">${line}</p><p class="sheet-actions"><a class="next" href="${base}${l.path.split('/').map(encodeURIComponent).join('/')}">요금표·감면·운영시간</a>${l.lat ? `<a class="next" href="https://map.naver.com/p/search/${encodeURIComponent(l.name + ' ' + l.sigungu)}" target="_blank" rel="noopener">네이버 지도</a>` : ''}</p></section>`;
   }
+  // '무료 주차장만': the typed search (name, 동네, 역) narrows to free lots — people look for free parking at a destination, not only around them
+  const scope = $('scope'), scopeHint = $('scope-hint');
+  let freeOnly = false, lastStation = null;
+  const pool = () => freeOnly ? D.filter(l => l.fee === '무료') : D;
   let items = [], active = -1;
   function open(q) {
     const terms = q.trim().split(/\s+/).map(norm).filter(Boolean);  // '서울 가산동' → both terms must match
     const nq = norm(q);
     // a station name ("거제역", "수원") puts "근처 주차장" first — the lot named 거제 in 거제시 is not what a Busan commuter means
     const stations = nq.length >= 2 ? ST.filter(s => s.q === nq || s.q === nq + '역' || (nq.endsWith('역') && s.q.startsWith(nq))).slice(0, 2) : [];
-    items = terms.length ? [...stations, ...D.filter(l => terms.every(t => l.q.includes(t))).slice(0, 8 - stations.length)] : [];
-    menu.innerHTML = items.length ? items.map((l, i) => l.kind === 'station' ? `<li id="q-option-${i}" role="option" data-i="${i}" aria-selected="${i === active}">${l.name} 근처 주차장<small class="muted"> 역 기준 가까운 순</small></li>` : `<li id="q-option-${i}" role="option" data-i="${i}" aria-selected="${i === active}">${l.name}<small class="muted"> ${l.sido} ${l.sigungu}${l.loc ? ' ' + l.loc : ''} · ${l.fee === '무료' ? '무료' : (cost(l, 60) != null ? '1시간 ' + won(cost(l, 60)) : l.fee)}</small></li>`).join('') : (nq ? '<li class="empty">이 이름의 공영주차장이 없어요. 동네나 역 이름으로도 찾아보세요.</li>' : '<li class="empty">주차장 이름, 동네, 역 이름을 입력하세요.</li>');
+    let lots = terms.length ? pool().filter(l => terms.every(t => l.q.includes(t))) : [];
+    // 무료만 + a 동네 with only paid lots ('역삼동'): the paid matches still locate the place — offer '근처 무료 주차장' from their centre
+    if (freeOnly && terms.length && !lots.length && !stations.length) { const m = D.filter(l => l.lat && terms.every(t => l.q.includes(t))); if (m.length) { const mid = a => a.sort((x, y) => x - y)[a.length >> 1]; stations.push({ kind: 'area', name: q.trim(), lat: mid(m.map(l => l.lat)), lng: mid(m.map(l => l.lng)), paid: m.length }); } }
+    items = terms.length ? [...stations, ...lots.slice(0, 8 - stations.length)] : [];
+    menu.innerHTML = items.length ? items.map((l, i) => l.kind ? `<li id="q-option-${i}" role="option" data-i="${i}" aria-selected="${i === active}">${l.name} 근처 ${freeOnly ? '무료 ' : ''}주차장<small class="muted"> ${l.kind === 'area' ? `이 동네 공영주차장 ${l.paid}곳은 모두 유료 · 가까운 순` : '역 기준 가까운 순'}</small></li>` : `<li id="q-option-${i}" role="option" data-i="${i}" aria-selected="${i === active}">${l.name}<small class="muted"> ${l.sido} ${l.sigungu}${l.loc ? ' ' + l.loc : ''} · ${l.fee === '무료' ? '무료' : (cost(l, 60) != null ? '1시간 ' + won(cost(l, 60)) : l.fee)}</small></li>`).join('') : (nq ? (freeOnly ? '<li class="empty">이 이름의 무료 공영주차장이 없어요. 역이나 동네 이름을 치면 그 근처 무료 주차장을 찾아드려요.</li>' : '<li class="empty">이 이름의 공영주차장이 없어요. 동네나 역 이름으로도 찾아보세요.</li>') : '<li class="empty">주차장 이름, 동네, 역 이름을 입력하세요.</li>');
     menu.hidden = false; input.setAttribute('aria-expanded', 'true');
     const option = active >= 0 ? $(`q-option-${active}`) : null;
     if (option) { input.setAttribute('aria-activedescendant', option.id); option.scrollIntoView({ block: 'nearest' }); } else input.removeAttribute('aria-activedescendant');
@@ -97,15 +104,17 @@
   let userIntent = 0;  // a late GPS answer must not replace what the user searched/picked meanwhile
   function choose(l) {
     ++userIntent;
-    if (l.kind === 'station') {
-      input.value = l.name; close();
-      const near = nearest(l.lat, l.lng, false, 6);
-      const msg = $('geo-msg'); msg.hidden = false; msg.textContent = `${l.name} 근처 주차장 ${near.length}곳 (직선거리)`;
+    if (l.kind) {  // station or 동네 centre
+      input.value = l.name; close(); lastStation = l;
+      const near = nearest(l.lat, l.lng, freeOnly, 6);
+      const msg = $('geo-msg'); msg.hidden = false;
+      // the nearest free lot may be far (강남역 → 과천 3.9 km): say so instead of presenting it as 'near'
+      msg.textContent = freeOnly && near.length && near[0].d > 2 ? `${l.name} 2 km 안에는 무료 공영주차장이 없어요 · 가장 가까운 ${near.length}곳 (직선거리)` : `${l.name} 근처 ${freeOnly ? '무료 ' : ''}주차장 ${near.length}곳 (직선거리)`;
       show(near.map(({ l: x, d }) => card(x, ` · ${l.name}에서 ${fmtKm(d)}`)).join(''));
-      bringIntoView(out);
+      bringIntoView(msg);  // the '… N곳' line explains the list (esp. '2 km 안에는 없어요') — keep it on screen above the cards
       return;
     }
-    input.value = l.name; close(); show(card(l)); localStorage.setItem('juchabi.lot', l.path);
+    lastStation = null; input.value = l.name; close(); show(card(l)); localStorage.setItem('juchabi.lot', l.path);
     bringIntoView(out);
   }
   input.addEventListener('focus', () => { setTimeout(() => input.select(), 0); open(input.value); });
@@ -121,6 +130,13 @@
   menu.addEventListener('mousedown', e => { const li = e.target.closest('li[data-i]'); if (li) { choose(items[+li.dataset.i]); e.preventDefault(); } });
   input.addEventListener('blur', () => setTimeout(close, 120));
 
+  if (scope) scope.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    freeOnly = b.dataset.free === '1'; scope.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b));
+    scopeHint.hidden = !freeOnly; input.placeholder = freeOnly ? '예: 강남역, 역삼동, 해운대' : ph;
+    if (lastStation) choose(lastStation);  // a station list on screen re-filters in place
+    else if (!menu.hidden || document.activeElement === input) open(input.value);
+  });
   const freeBtn = $('geo-free');
   const idle = { geo: geoBtn.textContent, free: freeBtn ? freeBtn.textContent : '' };
   const busy = (btn, on) => { for (const b of [geoBtn, freeBtn]) if (b) { b.disabled = on; b.classList.toggle('busy', on && b === btn); } btn.textContent = on ? '위치를 확인하는 중…' : (btn === geoBtn ? idle.geo : idle.free); };
