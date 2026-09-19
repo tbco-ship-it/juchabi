@@ -15,9 +15,7 @@
 <div class="ad-slot"><!-- ad: sigungu --></div>
 {% set paid = g.lots|rejectattr('fee','equalto','무료')|list %}{% set free = g.lots|selectattr('fee','equalto','무료')|list %}
 {% if paid %}<div class="sec"><div class="sec-h"><h2>유료 <span class="muted small">{{ paid|length }}곳</span></h2></div>
-<table class="tbl"><thead><tr><th>주차장</th><th>요금 규칙</th><th>1시간</th><th>2시간</th><th>월정기</th></tr></thead><tbody>
-{% for l in paid %}<tr><td><a href="{{ base }}{{ l.path }}">{{ l.name }}</a>{% if l.locality %} <small class="muted">{{ l.locality }}</small>{% endif %}</td><td>{{ l.fee_line }}</td><td>{{ l.costs[1]|won if l.costs[1] is not none else '—' }}</td><td>{{ l.costs[2]|won if l.costs[2] is not none else '—' }}</td><td>{{ l.month_won|won if l.month_won else '—' }}</td></tr>{% endfor %}
-</tbody></table></div>{% endif %}
+<ul class="list fee">{% for l in paid %}<li><a href="{{ base }}{{ l.path }}"><span class="nm">{{ l.name }}{% if l.locality %} <small>{{ l.locality }}</small>{% endif %}<small class="rule">{{ l.fee_line }}{% if l.month_won %} · 월 {{ l.month_won|won }}{% endif %}</small></span><span class="meta">{% if l.costs[1] is not none %}1시간 <b>{{ l.costs[1]|won }}</b>{% if l.costs[2] is not none %} · 2시간 {{ l.costs[2]|won }}{% endif %}{% else %}—{% endif %}</span></a></li>{% endfor %}</ul></div>{% endif %}
 {% if free %}<div class="sec"><div class="sec-h"><h2>무료 <span class="muted small">{{ free|length }}곳</span></h2></div>
 <ul class="list">{% for l in free %}<li><a href="{{ base }}{{ l.path }}">{{ l.name }}{% if l.locality %} <small>{{ l.locality }}</small>{% endif %}<span class="meta">{{ l.h_week or '운영시간 미기재' }}{% if l.spaces %} · {{ l.spaces }}면{% endif %}</span></a></li>{% endfor %}</ul></div>{% endif %}
 <p class="muted small">출처: {{ g.lots[0].provider }} 등이 공공데이터포털에 등록한 자료(기준일 최신 {{ g.stats.latest }}). "—"는 지자체가 요금 항목을 비워 둔 곳입니다.</p>

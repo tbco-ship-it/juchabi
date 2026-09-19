@@ -10,7 +10,7 @@
   // Same rule as scripts/build.py cost(): basic block, then ceil(extra/unit)*unit fee, capped by the day ticket.
   function cost(l, min) {
     if (l.fee === '무료') return 0;
-    if (l.bwon == null || (l.bmin == null && l.amin == null)) return null;
+    if ((!l.bwon && !l.awon) || l.bwon == null || (l.bmin == null && l.amin == null)) return null;
     const b = l.bmin || 0; let t;
     if (min <= b) t = l.bwon; else if (l.amin && l.awon != null) t = l.bwon + Math.ceil((min - b) / l.amin) * l.awon; else return null;
     if (l.day) t = Math.min(t, l.day);

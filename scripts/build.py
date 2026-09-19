@@ -33,6 +33,8 @@ def cost(l, minutes):
     if l["fee"] == "무료":
         return 0
     b_min, b_won, a_min, a_won = l["basic_min"], l["basic_won"], l["add_min"], l["add_won"]
+    if not b_won and not a_won:
+        return None  # 유료인데 금액이 0/공란 → 미기재
     if b_won is None or (b_min is None and a_min is None):
         return None
     b_min = b_min or 0
@@ -52,6 +54,8 @@ def cost(l, minutes):
 def fee_line(l):
     if l["fee"] == "무료":
         return "무료"
+    if not l["basic_won"] and not l["add_won"]:
+        return "요금 미기재" if l["fee"] == "유료" else f"{l['fee']} (요금 미기재)"
     if l["basic_won"] is not None and l["basic_min"]:
         s = f"기본 {l['basic_min']}분 {won(l['basic_won'])}"
         if l["add_min"] and l["add_won"] is not None:
