@@ -90,6 +90,8 @@
     let i = 0; out.querySelectorAll(':scope > *').forEach(c => { [c, ...c.children].forEach(el => { el.classList.add('rv'); el.style.setProperty('--d', (i++ * 45) + 'ms'); }); });
     void out.offsetHeight; out.classList.add('is-in');
   }
+  // On a phone the result sits below the form (often behind the browser's bottom bar): bring it into view so a tap visibly did something.
+  const bringIntoView = el => { if (innerWidth < 900) setTimeout(() => el.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' }), 60); };
   let userIntent = 0;  // a late GPS answer must not replace what the user searched/picked meanwhile
   function choose(l) {
     ++userIntent;
@@ -98,12 +100,11 @@
       const near = nearest(l.lat, l.lng, false, 6);
       const msg = $('geo-msg'); msg.hidden = false; msg.textContent = `${l.name} 근처 주차장 ${near.length}곳 (직선거리)`;
       show(near.map(({ l: x, d }) => card(x, ` · ${l.name}에서 ${fmtKm(d)}`)).join(''));
-      if (innerWidth < 900) setTimeout(() => out.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' }), 60);
+      bringIntoView(out);
       return;
     }
     input.value = l.name; close(); show(card(l)); localStorage.setItem('juchabi.lot', l.path);
-    // On a phone the result sits below the form: bring the price into view (not for GPS lists — the user didn't pick one).
-    if (innerWidth < 900) setTimeout(() => out.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' }), 60);
+    bringIntoView(out);
   }
   input.addEventListener('focus', () => { setTimeout(() => input.select(), 0); open(input.value); });
   input.addEventListener('input', () => { ++userIntent; active = -1; open(input.value); });
@@ -130,6 +131,7 @@
       const near = nearest(pos.coords.latitude, pos.coords.longitude, freeOnly, 5);
       msg.textContent = freeOnly ? `가까운 무료 주차장 ${near.length}곳 (직선거리)` : `가까운 주차장 ${near.length}곳 (직선거리)`;
       show(near.map(({ l, d }) => card(l, ` · ${fmtKm(d)}`)).join(''));
+      bringIntoView(msg);  // GPS list: the '가까운 … N곳' line first, cards right under it
     }, () => { busy(btn, false); if (ticket !== userIntent) return; msg.hidden = false; msg.textContent = '위치 권한이 없어요. 이름으로 찾아 주세요.'; }, { timeout: 8000 });
   };
   geoBtn.addEventListener('click', () => locate(geoBtn, false));
