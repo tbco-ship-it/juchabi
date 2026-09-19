@@ -661,3 +661,6 @@ a{color:var(--link)}
 .geo-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}.geo-row .next{width:100%;justify-content:center}
 .next.geo-free{background:var(--surface-2);color:var(--text)}.next.geo-free:hover{background:var(--surface-2);color:var(--text)}
 @media (max-width:420px){.geo-row{grid-template-columns:1fr}}
+
+/* <button class="next">: drop the UA outset border (shows as a pale ring on iOS dark mode) and inherit the site font; keep .next size/weight */
+button.next{appearance:none;-webkit-appearance:none;border:0;font-family:inherit;cursor:pointer}

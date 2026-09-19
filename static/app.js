@@ -91,7 +91,9 @@
     void out.offsetHeight; out.classList.add('is-in');
   }
   // On a phone the result sits below the form (often behind the browser's bottom bar): bring it into view so a tap visibly did something.
-  const bringIntoView = el => { if (innerWidth < 900) setTimeout(() => el.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' }), 60); };
+  // Layout position (offsetTop chain), not the rendered box: right after the first result the stage is mid-glide (translateY) and
+  // scrollIntoView would land ~100px too far down; scroll-margin-top keeps the target below the sticky header.
+  const bringIntoView = el => { if (innerWidth >= 900) return; setTimeout(() => { let y = 0; for (let e = el; e; e = e.offsetParent) y += e.offsetTop; y -= parseFloat(getComputedStyle(el).scrollMarginTop) || 0; scrollTo({ top: y, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); }, 60); };
   let userIntent = 0;  // a late GPS answer must not replace what the user searched/picked meanwhile
   function choose(l) {
     ++userIntent;
