@@ -46,7 +46,7 @@ def cost(l, minutes):
         return None  # 기본요금만 있고 초과 규칙이 없다
     else:
         return None
-    if l["day_won"] and (l["day_hours"] in (None, 0, 24) or minutes <= (l["day_hours"] or 24) * 60):
+    if l["day_won"] and (not l["day_hours"] or l["day_hours"] >= 24 or minutes <= l["day_hours"] * 60):
         total = min(total, l["day_won"])
     return total
 
@@ -68,8 +68,8 @@ def fee_line(l):
 
 def hours_line(h):
     o, c = h
-    if not o or not c:
-        return ""
+    if not o or not c or o == c:
+        return ""  # 00:00~00:00 은 미기재로 본다
     return "24시간" if (o == "00:00" and c in ("23:59", "24:00")) else f"{o}~{c}"
 
 

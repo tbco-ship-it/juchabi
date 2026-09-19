@@ -12,8 +12,8 @@
 <section class="sheet {{ 'balanced' if l.fee == '무료' else ('quiet' if l.costs[1] is none else '') }}" data-lot="{{ l.path }}">
   <p class="sheet-label">{{ g.name }} · {{ l.kind }} {{ l.type }}주차장{% if l.spaces %} · {{ l.spaces }}면{% endif %}</p>
   <div class="sheet-num">{% if l.fee == '무료' %}<span class="num">무료</span>{% elif l.costs[1] is not none %}<span class="num" id="fee-num">{{ l.costs[1]|won }}</span><span class="pct" id="fee-for">1시간</span>{% else %}<span class="num small-num">{{ l.fee }}</span>{% endif %}</div>
-  <p class="sheet-title">{% if l.fee == '무료' %}{{ l.h_week or '운영시간 미기재' }}{% if l.free_open %} · {{ l.free_open }}{% endif %}{% else %}{{ l.fee_line }}{% if l.day_won %} · 일주차 {{ l.day_won|won }}{% if l.day_hours and l.day_hours != 24 %}({{ l.day_hours }}시간){% endif %}{% endif %}{% endif %}</p>
-  <p class="sheet-text">{{ l.addr }}{% if l.h_week %} · 평일 {{ l.h_week }}{% endif %}{% if l.h_sat and l.h_sat != l.h_week %} · 토요일 {{ l.h_sat }}{% endif %}{% if l.h_hol and l.h_hol != l.h_week %} · 공휴일 {{ l.h_hol }}{% endif %}{% if l.oper_day and l.oper_day != '평일+토요일+공휴일' %} · 운영 {{ l.oper_day.replace('+', '·') }}{% endif %}.</p>
+  <p class="sheet-title">{% if l.fee == '무료' %}{{ l.h_week or '운영시간 미기재' }}{% if l.free_open %} · {{ l.free_open }}{% endif %}{% else %}{{ l.fee_line }}{% if l.day_won %} · 일주차 {{ l.day_won|won }}{% if l.day_hours and 0 < l.day_hours < 24 %}({{ l.day_hours }}시간){% endif %}{% endif %}{% endif %}</p>
+  <p class="sheet-text">{{ l.addr }}{% if l.h_week %} · 평일 {{ l.h_week }}{% endif %}{% if l.h_sat and l.h_sat != l.h_week and '토요일' in l.oper_day %} · 토요일 {{ l.h_sat }}{% endif %}{% if l.h_hol and l.h_hol != l.h_week and '공휴일' in l.oper_day %} · 공휴일 {{ l.h_hol }}{% endif %}{% if l.oper_day and l.oper_day != '평일+토요일+공휴일' %} · 운영 {{ l.oper_day.replace('+', '·') }}{% endif %}.</p>
   {% if l.fee != '무료' and l.costs[1] is not none %}
   <div class="seg" id="dur" role="group" aria-label="주차 시간">{% for h in HOURS %}<button type="button" data-h="{{ h }}" {% if h == 1 %}aria-pressed="true"{% endif %}>{{ h }}시간</button>{% endfor %}</div>
   <div class="seg" id="disc" role="group" aria-label="감면">

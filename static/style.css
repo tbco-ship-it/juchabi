@@ -625,3 +625,18 @@ html.landing .stage{display:flex;flex-direction:column;justify-content:center;mi
 .list.fee .meta b{color:var(--text);font-weight:700}
 .list.fee a::after{margin-top:6px}
 @media (max-width:480px){.list.fee .meta{max-width:38%;font-size:.84rem}}
+
+/* 주차비 additions */
+h1,.hero h1,.sheet-title{word-break:keep-all;overflow-wrap:anywhere}
+header.top nav{display:flex;gap:18px;overflow-x:auto;white-space:nowrap;-webkit-overflow-scrolling:touch;scrollbar-width:none;max-width:100%}
+header.top nav::-webkit-scrollbar{display:none}
+@media(max-width:560px){header.top nav{gap:14px;margin-left:-4px;padding:2px 4px}}
+/* segmented control built from buttons (시간 · 감면) */
+.seg{gap:2px;flex-wrap:wrap;max-width:100%}
+.seg button{appearance:none;border:0;background:transparent;padding:8px 14px;border-radius:11px;font:inherit;font-size:.92rem;font-weight:600;color:var(--text-2);cursor:pointer;transition:background .18s,color .18s,box-shadow .18s;white-space:nowrap}
+.seg button[aria-pressed="true"]{background:var(--bg);color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.seg button:focus-visible{outline:3px solid var(--blue);outline-offset:-2px}
+.seg + .seg{margin-left:10px}
+@media(max-width:560px){.seg + .seg{margin-left:0}.seg button{padding:8px 11px;font-size:.88rem}}
+.sheet .seg{background:color-mix(in srgb,var(--text) 6%,transparent)}
+@media(prefers-color-scheme:dark){.seg button[aria-pressed="true"]{background:var(--surface-2)}}
