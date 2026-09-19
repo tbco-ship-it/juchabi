@@ -147,10 +147,17 @@ def _addr_key(addr):
     return (m.group(1), m.group(2), m.group(3) if sub == "0" else f"{m.group(3)}-{sub}")
 
 
+def _free_flag(code):
+    """Y=유료 / N=무료 per the API's own *_NM companions; anything else is unknown (None), never silently '유료'."""
+    return {"N": True, "Y": False}.get(str(code or "").strip().upper())
+
+
 def merge_seoul(lots):
     """서울열린데이터광장 GetParkInfo (data/raw/seoul_parkinfo_*.json): 848 public lots, most already in the standard set.
-    Matched lots gain Saturday/holiday-free flags, daily cap, monthly ticket and the realtime code; unmatched ones are added
-    as new lots (fee fields mapped, coordinates only where the API has them)."""
+    A code attaches to a standard lot only when the evidence is unambiguous (one name candidate, or one 지번 candidate, and no
+    name-vs-address conflict); a loose name containment counts only when unique. Codes with several candidates or a conflict go to
+    data/wip/seoul_review.json instead of becoming duplicates. Unmatched 시간제 lots are added as new lots (id seoul-<code>);
+    extra 노상 sections of the same name fold into one lot (spaces summed), 노외 name twins go to review."""
     files = sorted((ROOT / "data/raw").glob("seoul_parkinfo_*.json"))
     if not files:
         return
@@ -164,31 +171,50 @@ def merge_seoul(lots):
     by_addr = defaultdict(list)
     for l in seoul:
         by_name[(l["sigungu"], _nk(l["name"]))].append(l)
-        k = _addr_key(l["addr"])
-        if k:
+        for k in {_addr_key(a) for a in (l.get("addr_parcel"), l["addr"]) if a} - {None}:
             by_addr[k].append(l)
     matched = loose = added = sections = 0
+    review = []
     taken = set()
     new_by_key = {}
     for r in by_code.values():
         gu = (r["ADDR"] or "").split()[0] if r.get("ADDR") else ""
-        cands = by_name.get((gu, _nk(r["PKLT_NM"]))) or by_addr.get(_addr_key(r["ADDR"]) or ("", "", "")) or []
-        if not cands:
-            hit = _loose_match(_nk(r["PKLT_NM"]), gu, seoul, taken)
-            if hit:
-                cands, loose = [hit], loose + 1
-        extra = {"sat_free": r.get("SAT_CHGD_FREE_SE") == "N", "hol_free": r.get("LHLDY_YN") == "N", "night_free": r.get("NGHT_FREE_OPN_YN") == "Y",
+        nk = _nk(r["PKLT_NM"])
+        name_c = by_name.get((gu, nk), [])
+        addr_c = by_addr.get(_addr_key(r["ADDR"]) or ("", "", ""), [])
+        how = None
+        if len(name_c) == 1 and (not addr_c or name_c[0] in addr_c):
+            cands, how = name_c, "name"
+        elif len(name_c) == 1 and addr_c and name_c[0] not in addr_c:
+            cands, how = [], "conflict"  # 이름은 A, 지번은 B — 자동 병합 금지
+        elif len(name_c) > 1:
+            cands, how = [], "ambiguous_name"
+        elif len(addr_c) == 1:
+            cands, how = addr_c, "parcel"
+        elif len(addr_c) > 1:
+            cands, how = [], "ambiguous_parcel"
+        else:
+            hit = _loose_match(nk, gu, seoul, taken)
+            cands, how = ([hit], "loose") if hit else ([], None)
+            loose += bool(hit)
+        if how in ("conflict", "ambiguous_name", "ambiguous_parcel"):
+            review.append({"code": r["PKLT_CD"], "name": r["PKLT_NM"], "addr": r["ADDR"], "why": how,
+                           "candidates": [{"id": c["id"], "name": c["name"], "addr": c["addr"]} for c in name_c + addr_c]})
+            continue
+        sync = (r.get("LAST_DATA_SYNC_TM") or "")[:10]
+        extra = {"sat_free": _free_flag(r.get("SAT_CHGD_FREE_SE")), "hol_free": _free_flag(r.get("LHLDY_YN")), "night_free": r.get("NGHT_FREE_OPN_YN") == "Y",
                  "day_max_won": int(r["DLY_MAX_CRG"]) if (r.get("DLY_MAX_CRG") or 0) > 0 else None,
-                 "seoul_code": r["PKLT_CD"], "seoul_realtime": r.get("PRK_NOW_INFO_PVSN_YN") == "1", "seoul_sync": (r.get("LAST_DATA_SYNC_TM") or "")[:10]}
+                 "seoul_code": r["PKLT_CD"], "seoul_match": how, "seoul_oper": r.get("OPER_SE_NM") or "",
+                 "seoul_realtime": r.get("PRK_NOW_INFO_PVSN_YN") in ("1", "2"), "seoul_sync": sync}
         if cands:
             l = cands[0]
             if l.get("seoul_code"):
                 # 노상 구간마다 코드가 따로 온다 (망원 11개) — 첫 구간이 비워 둔 값만 뒷 구간에서 채운다
-                for k in ("day_max_won",):
-                    if not l.get(k) and extra[k]:
-                        l[k] = extra[k]
+                if not l.get("day_max_won") and extra["day_max_won"]:
+                    l["day_max_won"] = extra["day_max_won"]
                 if not l["month_won"] and to_int(r.get("MNTL_CMUT_CRG")):
                     l["month_won"] = to_int(r.get("MNTL_CMUT_CRG"))
+                l.setdefault("seoul_codes", [l["seoul_code"]]).append(r["PKLT_CD"])
                 continue
             taken.add(id(l))
             l.update(extra)
@@ -196,12 +222,19 @@ def merge_seoul(lots):
                 l["month_won"] = to_int(r.get("MNTL_CMUT_CRG"))
             matched += 1
             continue
-        nkey = (gu, _nk(r["PKLT_NM"]))
+        if r.get("OPER_SE_NM") in ("버스전용 주차장", "거주자 우선 주차장"):
+            review.append({"code": r["PKLT_CD"], "name": r["PKLT_NM"], "addr": r["ADDR"], "why": "not_hourly:" + r["OPER_SE_NM"], "candidates": []})
+            continue  # 일반 승용차가 시간제로 쓸 수 없는 곳은 신규 lot으로 만들지 않는다
+        nkey = (gu, nk)
         if nkey in new_by_key:
             prev = new_by_key[nkey]
-            if (r.get("TPKCT") or 0) > 0:
-                prev["spaces"] = (prev["spaces"] or 0) + int(r["TPKCT"])
-            sections += 1
+            if r.get("PKLT_KND") == "NS" and prev["type"] == "노상":
+                if (r.get("TPKCT") or 0) > 0:
+                    prev["spaces"] = (prev["spaces"] or 0) + int(r["TPKCT"])
+                prev.setdefault("seoul_codes", [prev["seoul_code"]]).append(r["PKLT_CD"])
+                sections += 1
+            else:
+                review.append({"code": r["PKLT_CD"], "name": r["PKLT_NM"], "addr": r["ADDR"], "why": "name_twin_offstreet", "candidates": [{"id": prev["id"], "name": prev["name"], "addr": prev["addr"]}]})
             continue
         try:
             lat, lng = float(r.get("LAT") or 0), float(r.get("LOT") or 0)
@@ -211,6 +244,7 @@ def merge_seoul(lots):
             lat = lng = None
         m = re.match(r"^(\S+구)", r["ADDR"] or "")
         if not m:
+            review.append({"code": r["PKLT_CD"], "name": r["PKLT_NM"], "addr": r["ADDR"], "why": "no_gu_in_addr", "candidates": []})
             continue
         paid = r.get("CHGD_FREE_SE") != "N"
         basic_won = int(r["PRK_CRG"]) if paid and (r.get("PRK_CRG") or 0) > 0 else None
@@ -224,7 +258,7 @@ def merge_seoul(lots):
         new_by_key[nkey] = {
             "id": f"seoul-{r['PKLT_CD']}", "name": re.sub(r"\s*\((구|시)\)$", "", re.sub(r"\s+", " ", r["PKLT_NM"]).strip()), "kind": "공영",
             "type": "노상" if r.get("PKLT_KND") == "NS" or "노상" in (r.get("PKLT_KND_NM") or "") else "노외",
-            "addr": "서울특별시 " + (r["ADDR"] or "").strip(), "sido": "서울특별시", "sido_slug": SIDO["서울특별시"][0], "sigungu": m.group(1), "gu": "",
+            "addr": "서울특별시 " + (r["ADDR"] or "").strip(), "addr_parcel": "서울특별시 " + (r["ADDR"] or "").strip(), "sido": "서울특별시", "sido_slug": SIDO["서울특별시"][0], "sigungu": m.group(1), "gu": "",
             "spaces": int(r["TPKCT"]) if (r.get("TPKCT") or 0) > 0 else None, "grade": "", "rotation": "",
             "oper_day": "평일+토요일+공휴일",
             "hours": {"weekday": [_hhmm4(r.get("WD_OPER_BGNG_TM")), _hhmm4(r.get("WD_OPER_END_TM"))], "sat": [_hhmm4(r.get("WE_OPER_BGNG_TM")), _hhmm4(r.get("WE_OPER_END_TM"))], "holiday": [_hhmm4(r.get("LHLDY_BGNG")), _hhmm4(r.get("LHLDY"))]},
@@ -233,26 +267,57 @@ def merge_seoul(lots):
             "hourly_review": False, "daily_review": False, "monthly_review": False, "fee_review": False, "fee_raw": {},
             "pay": "", "note": " / ".join(notes), "discounts": {}, "free_open": "야간 무료개방" if extra["night_free"] else "",
             "org": "서울시설공단" if "(시)" in r["PKLT_NM"] else f"서울특별시 {m.group(1)}", "phone": (r.get("TELNO") or "").strip(), "lat": lat, "lng": lng,
-            "disabled_zone": False, "ref_date": extra["seoul_sync"] or fetched, "provider": "서울열린데이터광장 (서울시 공영주차장 안내 정보)",
+            "disabled_zone": False, "ref_date": sync or fetched, "provider": "서울열린데이터광장 (서울시 공영주차장 안내 정보)",
             **extra,
         }
         lots.append(new_by_key[nkey])
         added += 1
+    (ROOT / "data/wip").mkdir(exist_ok=True)
+    (ROOT / "data/wip/seoul_review.json").write_text(json.dumps(review, ensure_ascii=False, indent=1))
     print(f"seoul merge: {matched} lots matched (attributes added; {loose} via loose name containment), {added} new lots "
-          f"({sections} extra 노상 sections folded into them) from {len(by_code)} unique codes")
+          f"({sections} extra 노상 sections folded into them), {len(review)} codes to data/wip/seoul_review.json from {len(by_code)} unique codes")
+
+
+_GEO_ADDR = re.compile(r"(?P<prefix>.+?)\s+(?P<name>[^\s(),]+(?:동|리|가|로|길))\s*(?P<mountain>산\s*)?(?P<main>\d+)(?:\s*-\s*(?P<sub>\d+))?(?:번지)?")
+_PREFIX_ALIAS = {"광주광역시": "전남광주통합특별시", "전라남도": "전남광주통합특별시", "서울": "서울특별시", "부산": "부산광역시", "대구": "대구광역시", "인천": "인천광역시"}
+
+
+_APPROX = re.compile(r"\s*(?:,.*|외\s*\d+\s*필지.*|일대|부근|일원|주변)$")
+
+
+def _geo_addr_key(text):
+    """('parcel'|'road', prefix tokens, 동·리·가/로·길 name, 산 여부, 본번, 부번) — the whole string must parse, else None.
+    '계림동 268 외 6필지', '대인동 16-13 일대', '부기리 557-7, 557-9' parse as their first parcel (see _geo_approx for the flag)."""
+    if not isinstance(text, str):
+        return None
+    text = re.sub(r"\s+", " ", re.sub(r"\([^)]*\)", "", text)).strip()
+    text = _APPROX.sub("", text)
+    m = _GEO_ADDR.fullmatch(text)
+    if not m:
+        return None
+    prefix = tuple(_PREFIX_ALIAS.get(t, t) for t in m["prefix"].split())
+    return ("road" if m["name"].endswith(("로", "길")) else "parcel", prefix, m["name"], bool(m["mountain"]), int(m["main"]), int(m["sub"] or 0))
+
+
+def _geo_approx(addr):
+    """True when the source address names an area or several parcels — the coordinate is a representative point, not the entrance."""
+    return bool(_APPROX.search(re.sub(r"\([^)]*\)", "", addr or "").strip()))
 
 
 def _geo_ok(addr, hit):
-    """VWorld refine=true는 '영등포동2가 53-0'을 '영등포동4가 53-2'로도 맞춘다 — 동·리·가 토큰과 본번이 응답에 그대로 있어야 믿는다."""
-    a = re.sub(r"\(.*?\)", "", addr)
-    m = re.sub(r"\(.*?\)", "", hit["matched"]).replace(" ", "")
-    tok = re.search(r"(\S+?(?:동|리|가))\s*(\d+)", a)  # 마지막 동·리·가 어절 + 본번
-    if tok:
-        return tok.group(1) in m and tok.group(2) in m
-    road = re.search(r"(\S+?(?:로|길))\s*(\d+)", a)
-    if road:
-        return road.group(1) in m and road.group(2) in m
-    return True
+    """Accept a VWorld hit only when every address component agrees: same kind, same 동·리·가 (or 로·길), same 산 flag, same 본번·부번,
+    and the requested 시도·시군구 tokens all appear in the returned prefix (VWorld may add the 읍·면 the source omitted).
+    refine=true otherwise happily returns 영등포동4가 53-2 for 영등포동2가 53-0, or 방학동 산 58-10 for 방학동 58-10."""
+    req, ret = _geo_addr_key(addr), _geo_addr_key(hit.get("matched", "") if isinstance(hit, dict) else "")
+    if not req or not ret or req[0] != ret[0] or req[2:] != ret[2:]:
+        return False
+    if not set(req[1]) <= set(ret[1]):
+        return False
+    try:
+        lat, lng = float(hit["lat"]), float(hit["lng"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    return 33 <= lat <= 39 and 124 <= lng <= 132
 
 
 def apply_geocode(lots):
@@ -266,12 +331,12 @@ def apply_geocode(lots):
         if l["lat"]:
             continue
         hit = cache.get(l["addr"])
-        if not hit:
+        if not hit or "lat" not in hit:
             continue
-        if not _geo_ok(l["addr"], hit):
+        if hit.get("status", "ok") != "ok" or not _geo_ok(l["addr"], hit):
             rejected += 1
             continue
-        l["lat"], l["lng"], l["geo_source"] = hit["lat"], hit["lng"], "vworld"
+        l["lat"], l["lng"], l["geo_source"], l["geo_approx"] = hit["lat"], hit["lng"], "vworld", _geo_approx(l["addr"])
         filled += 1
     print(f"geocode: {filled} lots got VWorld coordinates, {rejected} fuzzy matches rejected, {sum(1 for l in lots if not l['lat'])} still without")
 
@@ -333,7 +398,7 @@ def main():
         seen_id.add(dkey)
         lots.append({
             "id": pid, "name": re.sub(r"\s+", " ", r["PRKPLCE_NM"]).strip(), "kind": r["PRKPLCE_SE"].strip(), "type": r["PRKPLCE_TYPE"].strip(),
-            "addr": addr, "sido": sido, "sido_slug": SIDO[sido][0], "sigungu": sigungu, "gu": gu,
+            "addr": addr, "addr_parcel": (r["LNMADR"] or "").strip(), "sido": sido, "sido_slug": SIDO[sido][0], "sigungu": sigungu, "gu": gu,
             "spaces": to_int(r["PRKCMPRT"]), "grade": r["FEEDING_SE"].strip(), "rotation": r["ENFORCE_SE"].strip(),
             "oper_day": r["OPER_DAY"].strip(),
             "hours": {"weekday": [hhmm(r["WEEKDAY_OPER_OPEN_HHMM"]), hhmm(r["WEEKDAY_OPER_COLSE_HHMM"])],

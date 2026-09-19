@@ -25,9 +25,9 @@
   {% endif %}
   <table class="tbl spec mini"><tbody>
     {% if l.fee != '무료' and l.costs[1] is not none %}<tr><th>시간별 요금 <span class="muted">감면 전</span></th><td>{% for h in HOURS if l.costs[h] is not none %}{{ h }}시간 <b>{{ l.costs[h]|won }}</b>{% if not loop.last %} · {% endif %}{% endfor %}</td></tr>{% endif %}
-    {% if l.day_max_won %}<tr><th>1일 최대요금</th><td>{{ l.day_max_won|won }}</td></tr>{% endif %}
+    {% if l.day_max_won %}<tr><th>1일 최대요금</th><td>{{ l.day_max_won|won }}{% if not l.id.startswith('seoul-') %} <span class="muted small">서울시 안내 기준 — 위 시간별 요금에는 적용하지 않았습니다</span>{% endif %}</td></tr>{% endif %}
     {% if l.month_won %}<tr><th>월정기권</th><td>{{ l.month_won|won }}</td></tr>{% endif %}
-    {% if l.seoul_code and l.fee != '무료' %}<tr><th>토요일 · 공휴일</th><td>{{ '토요일 무료' if l.sat_free else '토요일 유료' }} · {{ '공휴일 무료' if l.hol_free else '공휴일 유료' }}{% if l.night_free %} · 야간 무료개방{% endif %}</td></tr>{% endif %}
+    {% if l.seoul_code and l.fee != '무료' %}<tr><th>토요일 · 공휴일</th><td>{{ '토요일 무료' if l.sat_free else ('토요일 유료' if l.sat_free is sameas false else '토요일 미확인') }} · {{ '공휴일 무료' if l.hol_free else ('공휴일 유료' if l.hol_free is sameas false else '공휴일 미확인') }}{% if l.night_free %} · 야간 무료개방{% endif %}{% if l.seoul_sync and l.seoul_sync < '2024' %} <span class="muted small">서울시 안내 {{ l.seoul_sync[:4] }}년 기준 — 현장 확인 필요</span>{% elif l.seoul_sync %} <span class="muted small">서울시 안내 {{ l.seoul_sync }} 기준</span>{% endif %}</td></tr>{% endif %}
     {% if l.disc_list %}<tr><th>감면</th><td>{% for k, lab, pct, t in l.disc_list %}<span class="pill" title="{{ t }}">{{ lab }}{% if pct %} {{ pct }}%{% else %} (조건부)</span>{% endif %}{% if pct %}</span>{% endif %} {% endfor %}</td></tr>{% endif %}
     {% if l.free_open and l.fee != '무료' %}<tr><th>무료 개방</th><td>{{ l.free_open }}</td></tr>{% endif %}
     {% if l.rotation and l.rotation != '미시행' %}<tr><th>부제</th><td>{{ l.rotation }}</td></tr>{% endif %}
@@ -38,14 +38,14 @@
   </tbody></table>
   <p class="sheet-actions"><a class="next" href="https://map.naver.com/p/search/{{ (l.addr ~ ' ' ~ l.name)|urlencode }}" rel="noopener" target="_blank">네이버 지도</a>{% if l.lat %}<a class="next" href="https://map.kakao.com/link/map/{{ l.name|urlencode }},{{ l.lat }},{{ l.lng }}" rel="noopener" target="_blank">카카오맵</a>{% endif %}<a class="next" href="{{ base }}{{ s.slug }}/{{ g.name }}/">{{ g.name }} 전체 요금</a></p>
 </section>
-{% if l.note %}<p class="muted small">지자체 특기사항 원문: {{ l.note }}{% if l.disc_list|selectattr(2, 'none')|list %} — "○시간 면제 후" 같은 조건부 감면은 위 계산기에 넣지 않았습니다.{% endif %}</p>{% endif %}
+{% if l.note %}<p class="muted small">{{ '서울시 안내 정보 요약' if l.id.startswith('seoul-') else '지자체 특기사항 원문' }}: {{ l.note }}{% if l.disc_list|selectattr(2, 'none')|list %} — "○시간 면제 후" 같은 조건부 감면은 위 계산기에 넣지 않았습니다.{% endif %}</p>{% endif %}
 <div class="ad-slot"><!-- ad: lot --></div>
 {% if near %}<div class="sec"><div class="sec-h"><h2>근처 공영주차장 <span class="muted small">등록 좌표 기준 직선거리</span></h2><a href="{{ base }}{{ s.slug }}/{{ g.name }}/">{{ g.name }} 전체</a></div>
 <ul class="list">{% for d, n in near %}<li><a href="{{ base }}{{ n.path }}">{{ n.name }} <small>{{ (d * 1000)|round|int if d < 1 else d|round(1) }}{{ ' m' if d < 1 else ' km' }}</small><span class="meta">{% if n.fee == '무료' %}무료{% elif n.costs[1] is not none %}1시간 {{ n.costs[1]|won }}{% else %}{{ n.fee_line }}{% endif %}</span></a></li>{% endfor %}</ul></div>{% endif %}
 <section class="prose">
   <h2>요금은 이렇게 계산했습니다</h2>
-  <p>{% if l.fee == '무료' %}지자체가 요금정보를 "무료"로 등록한 주차장입니다.{% elif l.costs[1] is not none %}기본 {{ l.basic_min or 0 }}분까지 {{ l.basic_won|won }}, 이후 {{ l.add_min }}분마다 {{ l.add_won|won }}씩 더해 1시간·2시간 요금을 냈습니다.{% if l.day_won %} 하루 요금이 일주차권 {{ l.day_won|won }}을 넘으면 그 금액에서 멈춥니다.{% endif %}{% if l.day_max_won %} 서울시가 안내한 1일 최대요금 {{ l.day_max_won|won }}을 넘으면 그 금액에서 멈춥니다.{% endif %} 운영시간 밖이나 무료 개방 시간대는 반영하지 않았습니다.{% else %}지자체가 기본요금이나 추가단위요금 항목을 비워 두어 시간별 요금을 계산할 수 없었습니다. 현장 안내판이나 관리기관에 확인하세요.{% endif %} <a href="{{ base }}guide/fee/">계산 방식 자세히</a></p>
-  <p class="muted small">출처: {% if l.id.startswith('seoul-') %}{{ l.provider }}(기준일 {{ l.ref_date }}). 서울시 주차장 코드 {{ l.seoul_code }}.{% else %}{{ l.provider }} 제공, 공공데이터포털 전국주차장정보표준데이터(기준일 {{ l.ref_date }}). 관리번호 {{ l.id }}.{% if l.seoul_code %} 토요일·공휴일·1일 최대요금은 서울열린데이터광장 서울시 공영주차장 안내 정보({{ l.seoul_sync }}) 기준.{% endif %}{% endif %}{% if l.geo_source == 'vworld' %} 좌표는 지자체가 비워 두어 주소를 국토교통부 브이월드 지오코더로 변환한 값입니다(오차 가능).{% endif %}</p>
+  <p>{% if l.fee == '무료' %}지자체가 요금정보를 "무료"로 등록한 주차장입니다.{% elif l.costs[1] is not none %}기본 {{ l.basic_min or 0 }}분까지 {{ l.basic_won|won }}, 이후 {{ l.add_min }}분마다 {{ l.add_won|won }}씩 더해 1시간·2시간 요금을 냈습니다.{% if l.day_won %} 하루 요금이 일주차권 {{ l.day_won|won }}을 넘으면 그 금액에서 멈춥니다.{% endif %}{% if l.day_max_won and l.id.startswith('seoul-') %} 서울시가 안내한 1일 최대요금 {{ l.day_max_won|won }}을 넘으면 그 금액에서 멈춥니다.{% endif %} 운영시간 밖이나 무료 개방 시간대는 반영하지 않았습니다.{% else %}지자체가 기본요금이나 추가단위요금 항목을 비워 두어 시간별 요금을 계산할 수 없었습니다. 현장 안내판이나 관리기관에 확인하세요.{% endif %} <a href="{{ base }}guide/fee/">계산 방식 자세히</a></p>
+  <p class="muted small">출처: {% if l.id.startswith('seoul-') %}{{ l.provider }}(기준일 {{ l.ref_date }}). 서울시 주차장 코드 {{ l.seoul_code }}.{% else %}{{ l.provider }} 제공, 공공데이터포털 전국주차장정보표준데이터(기준일 {{ l.ref_date }}). 관리번호 {{ l.id }}.{% if l.seoul_code %} 토요일·공휴일·1일 최대요금은 서울열린데이터광장 서울시 공영주차장 안내 정보({{ l.seoul_sync }}) 기준.{% endif %}{% endif %}{% if l.geo_source == 'vworld' %} 좌표는 지자체가 비워 두어 주소를 국토교통부 브이월드 지오코더로 변환한 값입니다{% if l.geo_approx %} — 주소가 "일대·외 필지"로 적혀 있어 대표 위치이며 실제 입구와 다를 수 있습니다{% else %}(오차 가능){% endif %}.{% endif %}</p>
 </section>
 <script src="{{ base }}static/app.js?v={{ v }}" defer></script>
 {% endblock %}
