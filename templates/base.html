@@ -12,6 +12,7 @@
 <link rel="stylesheet" href="{{ base }}static/style.css?v={{ v }}">
 <link rel="icon" href="{{ base }}static/favicon.svg?v={{ v }}" type="image/svg+xml">
 {% if adsense_pub %}<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-{{ adsense_pub }}" crossorigin="anonymous"></script>{% endif %}
+{% if origin == "https://juchabi.com" %}<script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "2e1b67fa21e542f5b495f8e3816a1e61"}'></script>{% endif %}
 {% block head %}{% endblock %}
 </head>
 <body>
