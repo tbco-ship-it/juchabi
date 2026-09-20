@@ -2,8 +2,9 @@
 // A bottom pill appears once the visitor has got value (home: after the first result; other pages: after a scroll and a few seconds),
 // phones only, never when already opened from the home screen, and not again for 30 days after ✕.
 // Android/Chromium: the pill fires the browser's own install dialog (beforeinstallprompt, held until the pill is tapped).
-// iOS: Apple has no install API — the pill opens a sheet whose button opens the share menu (navigator.share) where
-// "Add to Home Screen" lives (older iOS: behind "More"); the steps are written on the sheet before the menu opens.
+// iOS: Apple has no install API, and the Web Share sheet (navigator.share) deliberately omits Safari's own
+// "Add to Home Screen" item (verified on iOS 26, 2026-09-20) — so the pill opens a sheet of steps pointing at Safari's
+// own share button: iOS 26+ compact bar = ⋯ next to the address capsule → Share; older iOS = the share button at the bottom.
 // position:fixed for everything so nothing in the page moves (no CLS).
 (function () {
   const d = document, h = d.documentElement;
@@ -14,18 +15,19 @@
   try { if (+localStorage.getItem(KEY) > Date.now()) return; } catch (e) {}
   const snooze = days => { try { localStorage.setItem(KEY, String(Date.now() + days * 864e5)); } catch (e) {} };
   const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const iosMajor = ios ? +((navigator.userAgent.match(/OS (\d+)_/) || [])[1] || 0) : 0; // 0 = iPadOS/desktop UA: assume the new layout
   const name = (d.querySelector('meta[name="apple-mobile-web-app-title"]') || {}).content || d.title;
   const icon = (d.querySelector('link[rel="apple-touch-icon"]') || {}).href || '';
   const T = {
     ko: { pill: '홈 화면에 추가', sub: '다음엔 아이콘 한 번으로', close: '닫기', title: '홈 화면에 추가', lead: '앱처럼 바로 열려요. 설치 없이, 용량 없이.',
-          s1: '아래 버튼으로 공유 메뉴를 열어요', s2: '메뉴 아래쪽 <b>홈 화면에 추가</b>를 눌러요', s2n: '안 보이면 <b>더 보기</b> 안에 있어요', s3: '오른쪽 위 <b>추가</b>',
-          go: '공유 메뉴 열기', noshare: '사파리 아래쪽 <b>공유</b> 버튼을 누른 뒤', later: '다음에', ok: '설치', add: '추가' },
+          s1new: '주소창 오른쪽 <b>⋯</b> 을 누르고 <b>공유</b>', s1old: '사파리 아래쪽 <b>공유</b> 버튼을 눌러요', s2: '메뉴 아래쪽 <b>홈 화면에 추가</b>를 눌러요', s2n: '안 보이면 <b>더 보기</b> 안에 있어요', s3: '오른쪽 위 <b>추가</b>',
+          ok2: '알겠어요', later: '다음에', ok: '설치', add: '추가' },
     ja: { pill: 'ホーム画面に追加', sub: '次からはアイコン1つで', close: '閉じる', title: 'ホーム画面に追加', lead: 'アプリのようにすぐ開けます。インストール不要。',
-          s1: '下のボタンで共有メニューを開く', s2: 'メニュー下の<b>ホーム画面に追加</b>をタップ', s2n: '見当たらなければ<b>その他</b>の中にあります', s3: '右上の<b>追加</b>',
-          go: '共有メニューを開く', noshare: 'Safari下部の<b>共有</b>ボタンを押してから', later: 'あとで', ok: 'インストール', add: '追加' },
+          s1new: 'アドレスバー右の<b>⋯</b>をタップして<b>共有</b>', s1old: 'Safari下部の<b>共有</b>ボタンをタップ', s2: 'メニュー下の<b>ホーム画面に追加</b>をタップ', s2n: '見当たらなければ<b>その他</b>の中にあります', s3: '右上の<b>追加</b>',
+          ok2: 'わかりました', later: 'あとで', ok: 'インストール', add: '追加' },
     en: { pill: 'Add to Home Screen', sub: 'Next time, one tap', close: 'Close', title: 'Add to Home Screen', lead: 'Opens like an app. Nothing to install, no storage used.',
-          s1: 'Open the share menu with the button below', s2: 'Tap <b>Add to Home Screen</b> near the bottom', s2n: 'Not there? It is under <b>More</b>', s3: 'Tap <b>Add</b> top right',
-          go: 'Open share menu', noshare: 'Tap Safari\'s <b>share</b> button at the bottom, then', later: 'Not now', ok: 'Install', add: 'Add' }
+          s1new: 'Tap <b>⋯</b> next to the address bar, then <b>Share</b>', s1old: 'Tap Safari\'s <b>share</b> button at the bottom', s2: 'Tap <b>Add to Home Screen</b> near the bottom', s2n: 'Not there? It is under <b>More</b>', s3: 'Tap <b>Add</b> top right',
+          ok2: 'Got it', later: 'Not now', ok: 'Install', add: 'Add' }
   };
   const t = () => T[(h.lang || 'en').slice(0, 2)] || T.en;
   const css = `
@@ -72,21 +74,19 @@
   }
   function hide() { if (!pill) return; pill.classList.remove('on'); setTimeout(() => pill.remove(), 500); }
   function sheet() {
-    const s = t(), can = !!navigator.share;
+    const s = t();
     const bg = d.createElement('div'); bg.className = 'a2hs-bg';
     const sh = d.createElement('div'); sh.className = 'a2hs-sheet'; sh.setAttribute('role', 'dialog'); sh.setAttribute('aria-label', s.title);
     sh.innerHTML = `<div class="hd">${icon ? `<img src="${icon}" alt="">` : ''}<div><b>${name}</b><span>${s.lead}</span></div></div>
-      <ol><li><i>1</i><div>${can ? s.s1 : s.noshare} ${SHARE}</div></li>
+      <ol><li><i>1</i><div>${iosMajor && iosMajor < 26 ? s.s1old : s.s1new} ${SHARE}</div></li>
       <li><i>2</i><div>${s.s2} ${PLUS}<small>${s.s2n}</small></div></li>
       <li><i>3</i><div>${s.s3}</div></li></ol>
-      ${can ? `<button type="button" class="go">${SHARE}${s.go}</button>` : ''}<button type="button" class="later">${s.later}</button>`;
+      <button type="button" class="go">${s.ok2}</button><button type="button" class="later">${s.later}</button>`;
     d.body.append(bg, sh); h.classList.add('a2hs-open');
     const close = () => { h.classList.remove('a2hs-open'); setTimeout(() => { bg.remove(); sh.remove(); }, 450); };
     bg.onclick = close; sh.querySelector('.later').onclick = () => { snooze(30); close(); hide(); };
-    if (can) sh.querySelector('.go').onclick = async () => {
-      try { await navigator.share({ title: name, url: location.href }); } catch (e) { return; } // cancelled: keep the steps on screen
-      snooze(30); close(); hide(); // the menu closed: either added (next launch is standalone → never asked again) or not — don't nag
-    };
+    // Can't observe whether they add it: if they do, the next launch is standalone and we never ask again; if not, don't nag for 30 days.
+    sh.querySelector('.go').onclick = () => { snooze(30); close(); hide(); };
   }
   // The moment of value: home page leaves its landing state on the first result; elsewhere a scroll plus a few seconds.
   const arm = () => { if (ready) return; ready = true; show(); };
