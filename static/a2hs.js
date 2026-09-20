@@ -1,6 +1,7 @@
 // Add to Home Screen. Shared across the sites — change here, port to all (same file in every repo).
 // A bottom pill appears once the visitor has got value (home: after the first result; other pages: after a scroll and a few seconds),
-// phones only, never when already opened from the home screen, and not again for 30 days after ✕.
+// phones only, never when already opened from the home screen. ✕ / 다음에 = quiet for 30 days. iOS '알겠어요' = intent, not success:
+// the sheet closes into a one-line reminder of the path for this page view, and the pill returns after 3 days (once), then 30.
 // Android/Chromium: the pill fires the browser's own install dialog (beforeinstallprompt, held until the pill is tapped).
 // iOS: Apple has no install API, and the Web Share sheet (navigator.share) deliberately omits Safari's own
 // "Add to Home Screen" item (verified on iOS 26, 2026-09-20) — so the pill opens a sheet of steps pointing at Safari's
@@ -11,7 +12,7 @@
   const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
   const phone = matchMedia('(pointer: coarse)').matches && innerWidth < 900;
   if (standalone || !phone) return;
-  const KEY = 'a2hs.until';
+  const KEY = 'a2hs.until', OK = 'a2hs.ok';
   try { if (+localStorage.getItem(KEY) > Date.now()) return; } catch (e) {}
   const snooze = days => { try { localStorage.setItem(KEY, String(Date.now() + days * 864e5)); } catch (e) {} };
   const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -21,13 +22,13 @@
   const T = {
     ko: { pill: '홈 화면에 추가', sub: '다음엔 아이콘 한 번으로', close: '닫기', title: '홈 화면에 추가', lead: '앱처럼 바로 열려요. 설치 없이, 용량 없이.',
           s1new: '주소창 오른쪽 <b>⋯</b> 을 누르고 <b>공유</b>', s1old: '사파리 아래쪽 <b>공유</b> 버튼을 눌러요', s2: '메뉴 아래쪽 <b>홈 화면에 추가</b>를 눌러요', s2n: '안 보이면 <b>더 보기</b> 안에 있어요', s3: '오른쪽 위 <b>추가</b>',
-          ok2: '알겠어요', later: '다음에', ok: '설치', add: '추가' },
+          ok2: '알겠어요', later: '다음에', ok: '설치', add: '추가', remnew: '<b>⋯</b> → 공유 → 홈 화면에 추가', remold: '공유 → 홈 화면에 추가' },
     ja: { pill: 'ホーム画面に追加', sub: '次からはアイコン1つで', close: '閉じる', title: 'ホーム画面に追加', lead: 'アプリのようにすぐ開けます。インストール不要。',
           s1new: 'アドレスバー右の<b>⋯</b>をタップして<b>共有</b>', s1old: 'Safari下部の<b>共有</b>ボタンをタップ', s2: 'メニュー下の<b>ホーム画面に追加</b>をタップ', s2n: '見当たらなければ<b>その他</b>の中にあります', s3: '右上の<b>追加</b>',
-          ok2: 'わかりました', later: 'あとで', ok: 'インストール', add: '追加' },
+          ok2: 'わかりました', later: 'あとで', ok: 'インストール', add: '追加', remnew: '<b>⋯</b> → 共有 → ホーム画面に追加', remold: '共有 → ホーム画面に追加' },
     en: { pill: 'Add to Home Screen', sub: 'Next time, one tap', close: 'Close', title: 'Add to Home Screen', lead: 'Opens like an app. Nothing to install, no storage used.',
           s1new: 'Tap <b>⋯</b> next to the address bar, then <b>Share</b>', s1old: 'Tap Safari\'s <b>share</b> button at the bottom', s2: 'Tap <b>Add to Home Screen</b> near the bottom', s2n: 'Not there? It is under <b>More</b>', s3: 'Tap <b>Add</b> top right',
-          ok2: 'Got it', later: 'Not now', ok: 'Install', add: 'Add' }
+          ok2: 'Got it', later: 'Not now', ok: 'Install', add: 'Add', remnew: '<b>⋯</b> → Share → Add to Home Screen', remold: 'Share → Add to Home Screen' }
   };
   const t = () => T[(h.lang || 'en').slice(0, 2)] || T.en;
   const css = `
@@ -35,7 +36,7 @@
 .a2hs.on{transform:translate(-50%,0);opacity:1}
 .a2hs img{width:30px;height:30px;border-radius:8px;flex:none}
 .a2hs .t{display:flex;flex-direction:column;line-height:1.2;text-align:left;min-width:0}
-.a2hs .t b{font-size:.92rem;font-weight:700;white-space:nowrap}.a2hs .t span{font-size:.76rem;color:var(--muted);white-space:nowrap}
+.a2hs .t b{font-size:.92rem;font-weight:700;white-space:nowrap}.a2hs.rem .t b{font-weight:600}.a2hs.rem .t b b{font-weight:800}.a2hs .t span{font-size:.76rem;color:var(--muted);white-space:nowrap}
 .a2hs .go,.a2hs .x{appearance:none;border:0;font:inherit;cursor:pointer;flex:none}
 .a2hs .go{padding:8px 14px;border-radius:999px;background:var(--blue);color:#fff;font-weight:700;font-size:.88rem}
 .a2hs .x{width:30px;height:30px;border-radius:50%;background:transparent;color:var(--muted);font-size:1.1rem;line-height:1}
@@ -72,6 +73,12 @@
       try { p.prompt(); const r = await p.userChoice; snooze(r.outcome === 'accepted' ? 365 : 30); } catch (e) { snooze(30); }
     };
   }
+  function remind() {
+    if (!pill) return; const s = t();
+    pill.classList.add('rem'); pill.setAttribute('aria-label', s.title);
+    pill.innerHTML = `${icon ? `<img src="${icon}" alt="">` : ''}<div class="t"><b>${iosMajor && iosMajor < 26 ? s.remold : s.remnew}</b><span>${s.s3}</span></div><button type="button" class="x" aria-label="${s.close}">✕</button>`;
+    pill.querySelector('.x').onclick = hide;
+  }
   function hide() { if (!pill) return; pill.classList.remove('on'); setTimeout(() => pill.remove(), 500); }
   function sheet() {
     const s = t();
@@ -85,8 +92,12 @@
     d.body.append(bg, sh); h.classList.add('a2hs-open');
     const close = () => { h.classList.remove('a2hs-open'); setTimeout(() => { bg.remove(); sh.remove(); }, 450); };
     bg.onclick = close; sh.querySelector('.later').onclick = () => { snooze(30); close(); hide(); };
-    // Can't observe whether they add it: if they do, the next launch is standalone and we never ask again; if not, don't nag for 30 days.
-    sh.querySelector('.go').onclick = () => { snooze(30); close(); hide(); };
+    // Can't observe whether they add it: if they do, the next launch is standalone and we never ask again. 'Got it' is intent,
+    // so leave the path on screen for this visit and come back once after 3 days (weekly visitors get a second chance), then 30.
+    sh.querySelector('.go').onclick = () => {
+      let n = 0; try { n = +localStorage.getItem(OK) || 0; localStorage.setItem(OK, String(n + 1)); } catch (e) {}
+      snooze(n ? 30 : 3); close(); remind();
+    };
   }
   // The moment of value: home page leaves its landing state on the first result; elsewhere a scroll plus a few seconds.
   const arm = () => { if (ready) return; ready = true; show(); };
