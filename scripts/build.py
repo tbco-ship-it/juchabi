@@ -178,10 +178,12 @@ def main():
         g["lots"].append(l)
 
     def stats(lst):
-        paid = [l for l in lst if l["fee"] != "무료"]
+        paid = [l for l in lst if l["fee"] != "무료"]   # 유료 + 혼합(부분 유료): 시간 요금이 있는 쪽
         free = [l for l in lst if l["fee"] == "무료"]
+        mixed = [l for l in lst if l["fee"] == "혼합"]
         h1 = sorted(c for c in (l["costs"][1] for l in paid) if c is not None)  # 첫 1시간 0원도 값이다
-        return {"n": len(lst), "free": len(free), "paid": len(paid), "h1_med": median(h1) if h1 else None, "h1_n": len(h1),
+        return {"n": len(lst), "free": len(free), "paid": len(paid) - len(mixed), "mixed": len(mixed), "public_only": all(l["kind"] == "공영" for l in lst),
+                "h1_med": median(h1) if h1 else None, "h1_n": len(h1),
                 "h1_min": h1[0] if h1 else None, "h1_max": h1[-1] if h1 else None,
                 "weekend_free": len([l for l in paid if l.get("sat_free") or l.get("hol_free")]),
                 "monthly": len([l for l in lst if l["month_won"]]), "free_open": len([l for l in lst if l["free_open"]]),
@@ -255,7 +257,11 @@ def main():
             l["open_text"] = (f"연휴 {times.pop()}" if full else ", ".join(md(d) for d, _ in l["days"]) + f" {l['days'][0][1]}")
         else:
             l["open_text"] = " · ".join(f"{md(d)} {t}" for d, t in l["days"])
-        if re.search(r"(평일|주말|공휴일|야간|상시|연중|매일|토요일|일요일)", l["note"]) and re.search(r"(개방|무료|이용)", l["note"]) and not re.search(r"미개방|명절\s*(에만|기간에만|한정|만)|불가", l["note"]):
+        # '평소에도 개방' 후보: 시간대 단어 + 개방/무료/이용 이 있고, 부정어·조건부(안함/않/제외/충전 전용 등)가 없을 때만.
+        # 오성고 "상시개방안함전기차충전개방09:0016:00 설 추석 명절 개방" 같은 문구는 상시 일반 주차 개방이 아니다.
+        note = l["note"]
+        if (re.search(r"(평일|주말|공휴일|야간|상시|연중|매일|토요일|일요일)", note) and re.search(r"(개방|무료|이용)", note)
+                and not re.search(r"미개방|명절\s*(에만|기간에만|한정|만)|불가|안\s*함|않|없음|제외|금지|전기차|충전|장애인\s*전용|관계자|직원|입주|계약|정기권", note)):
             hf["always"].append(l)
     hby = defaultdict(lambda: defaultdict(list))
     for l in hraw["lots"]:
