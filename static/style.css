@@ -665,3 +665,27 @@ a{color:var(--link)}
 /* <button class="next">: drop the UA outset border (shows as a pale ring on iOS dark mode) and inherit the site font; keep .next size/weight */
 button.next{appearance:none;-webkit-appearance:none;border:0;font-family:inherit;cursor:pointer}
 .scope-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.calc>.field+.scope-row{margin-top:10px}.scope-row .seg{margin-top:0}.scope-row #scope-hint{flex:1 1 200px}
+
+/* 읍면동 hub: fee/free table scrolls on phones instead of squeezing; chips for sibling 동네 */
+.tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;background:var(--surface);border-radius:var(--r-card);padding:4px 6px}
+.tbl.emd{margin:0;min-width:640px;font-size:.9rem;font-feature-settings:"tnum"}
+.tbl.emd th,.tbl.emd td{padding:11px 10px;white-space:nowrap;text-align:left;border-bottom:1px solid var(--bg)}
+.tbl.emd td:first-child{white-space:normal;min-width:180px;font-weight:600}
+.tbl.emd td:last-child,.tbl.emd th:last-child{text-align:right}
+.tbl.emd tbody tr:last-child td{border-bottom:none}
+.tbl.emd .muted{font-weight:500}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chips .chip{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:999px;background:var(--surface);color:var(--text);font-weight:600;font-size:.9rem;text-decoration:none}
+.chips .chip small{color:var(--muted);font-weight:500}
+.chips .chip:hover{background:var(--bg)}
+@media(max-width:640px){
+.tbl-wrap{overflow:visible;padding:4px 6px}
+.tbl.emd{min-width:0;display:block}.tbl.emd thead{display:none}.tbl.emd tbody,.tbl.emd tr{display:block}
+.tbl.emd tr{padding:12px 10px;border-bottom:1px solid var(--bg)}.tbl.emd tbody tr:last-child{border-bottom:none}
+.tbl.emd td{display:inline;padding:0;border:0;white-space:normal;line-height:1.7}
+.tbl.emd td:first-child{display:block;font-size:1rem;line-height:1.35;margin-bottom:5px}
+.tbl.emd td+td+td::before{content:" · ";color:var(--muted)}
+.tbl.emd td[data-l]:not([data-l=""])::after{content:""}.tbl.emd td[data-l]:not([data-l=""]) {font-weight:600}
+.tbl.emd td[data-l]:not([data-l=""])::before{content:" · " attr(data-l) " ";color:var(--muted);font-weight:500}
+.tbl.emd td[data-l="1시간"]:not([data-l=""])::before{content:attr(data-l) " "}
+}

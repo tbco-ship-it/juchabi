@@ -7,7 +7,7 @@
 <script type="application/ld+json">{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[{"@type":"Question","name":"{{ l.name }} 주차요금은 얼마인가요?","acceptedAnswer":{"@type":"Answer","text":"{% if l.fee == '무료' %}무료 주차장입니다.{% else %}{{ l.fee_line }}입니다.{% if l.costs[1] is not none %} 1시간 {{ l.costs[1]|won }}, 2시간 {{ l.costs[2]|won }}, 3시간 {{ l.costs[3]|won }} 정도입니다.{% endif %}{% if l.day_won %} 일주차권 {{ l.day_won|won }}.{% endif %}{% endif %}{% if l.h_week %} 평일 운영시간은 {{ l.h_week }}입니다.{% endif %}"}}{% if l.disc_list %},{"@type":"Question","name":"{{ l.name }} 감면 혜택은?","acceptedAnswer":{"@type":"Answer","text":"{% for k, lab, pct, t in l.disc_list %}{{ lab }}{% if pct %} {{ pct }}%{% endif %}{% if not loop.last %}, {% endif %}{% endfor %} 감면이 특기사항에 명시되어 있습니다. 세부 조건은 {{ g.name }} 주차장 조례를 따릅니다."}}{% endif %}]}</script>
 {% endblock %}
 {% block content %}
-<nav class="crumbs"><a href="{{ base }}">홈</a> › <a href="{{ base }}{{ s.slug }}/">{{ s.short }}</a> › <a href="{{ base }}{{ s.slug }}/{{ g.name }}/">{{ g.name }}</a> › {{ l.name }}</nav>
+<nav class="crumbs"><a href="{{ base }}">홈</a> › <a href="{{ base }}{{ s.slug }}/">{{ s.short }}</a> › <a href="{{ base }}{{ s.slug }}/{{ g.name }}/">{{ g.name }}</a>{% if l.emd_path %} › <a href="{{ base }}{{ l.emd_path }}">{{ l.emd }}</a>{% endif %} › {{ l.name }}</nav>
 <h1>{{ l.name }} 주차요금</h1>
 <section class="sheet {{ 'balanced' if l.fee == '무료' else ('quiet' if l.costs[1] is none else '') }}" data-lot="{{ l.path }}" data-costs='{{ l.costs|tojson }}'>
   <p class="sheet-label">{{ g.name }} · {{ l.kind }} {{ l.type }}주차장{% if l.spaces %} · {{ l.spaces }}면{% endif %}</p>

@@ -99,6 +99,37 @@ def fee_line(l):
     return "요금 미기재" if l["fee"] == "유료" else f"{l['fee']} (요금 미기재)"
 
 
+_EMD = re.compile(r"(?:^|\s|\()([가-힣0-9]+(?:읍|면|동|가))(?=$|\s|[,)])")
+
+
+def emd_of(l):
+    """읍면동: parcel address first ('서울특별시 양천구 신월동 915-4'), then the '(신월동' parenthetical of a road-name address,
+    then the road address itself. Returns '' when none of them names an 읍/면/동 (roads like 테헤란로 are not neighbourhoods)."""
+    for a in (l.get("addr_parcel") or "", l["addr"]):
+        toks = a.split()
+        m = _EMD.search(" ".join(toks[1:]) if toks else "")
+        if m and not m.group(1).endswith(("시", "군", "구")):
+            return m.group(1)
+    return ""
+
+
+def weekend_cells(l):
+    """Saturday / holiday cell text for the 읍면동 table, same reading as lot.html: Seoul rows carry explicit 유무료,
+    elsewhere 비고 text → '무료', 운영요일 without the day → '미운영'(no fee collection), otherwise '미확인'."""
+    if l["fee"] == "무료":
+        return {"sat": "무료", "hol": "무료"}
+
+    def cell(free, unstaffed):
+        if free:
+            return "무료"
+        if l.get("seoul_code") and free is False:
+            return "유료"
+        if unstaffed:
+            return "미운영"
+        return "미확인" if not l.get("seoul_code") else "유료"
+    return {"sat": cell(l.get("sat_free"), l.get("sat_unstaffed")), "hol": cell(l.get("hol_free"), l.get("hol_unstaffed"))}
+
+
 def hours_line(h):
     o, c = h
     if not o or not c or o == c:
@@ -123,8 +154,10 @@ def main():
         l["fee_line"] = fee_line(l)
         l["costs"] = {h: cost(l, h * 60) for h in HOURS}
         l["h_week"], l["h_sat"], l["h_hol"] = hours_line(l["hours"]["weekday"]), hours_line(l["hours"]["sat"]), hours_line(l["hours"]["holiday"])
+        l["emd"] = emd_of(l)
         toks = l["addr"].split()
-        l["locality"] = next((t for t in toks[1:] if re.search(r"(읍|면|동|리|가|로|길)$", t) and not t.endswith(("시", "군", "구"))), "")
+        l["locality"] = l["emd"] or next((t for t in toks[1:] if re.search(r"(읍|면|동|리|가|로|길)$", t) and not t.endswith(("시", "군", "구"))), "")
+        l["wk"] = weekend_cells(l)
         l["disc_list"] = [(k, CAT_LABEL[k], v["pct"], v["text"]) for k in CAT_ORDER for v in [l["discounts"].get(k)] if v]
         ld = {"@context": "https://schema.org", "@type": "ParkingFacility", "name": l["name"], "address": {"@type": "PostalAddress", "streetAddress": l["addr"], "addressCountry": "KR"}}
         if l["lat"]:
@@ -149,6 +182,8 @@ def main():
         free = [l for l in lst if l["fee"] == "무료"]
         h1 = sorted(c for c in (l["costs"][1] for l in paid) if c is not None)  # 첫 1시간 0원도 값이다
         return {"n": len(lst), "free": len(free), "paid": len(paid), "h1_med": median(h1) if h1 else None, "h1_n": len(h1),
+                "h1_min": h1[0] if h1 else None, "h1_max": h1[-1] if h1 else None,
+                "weekend_free": len([l for l in paid if l.get("sat_free") or l.get("hol_free")]),
                 "monthly": len([l for l in lst if l["month_won"]]), "free_open": len([l for l in lst if l["free_open"]]),
                 "disc": Counter(k for l in lst for k in l["discounts"]).most_common(4),
                 "latest": max((l["ref_date"] for l in lst), default="")}
@@ -158,6 +193,22 @@ def main():
             g["stats"] = stats(g["lots"])
             g["lots"].sort(key=lambda l: (l["fee"] == "무료", l["name"]))  # 유료 먼저(사람들이 찾는 것), 이름순
             g["disc_summary"] = {k: Counter(l["discounts"][k]["pct"] for l in g["lots"] if k in l["discounts"] and l["discounts"][k]["pct"]).most_common(1) for k in CAT_ORDER}
+            slugs = {l["slug"] for l in g["lots"]}
+            emds = defaultdict(list)
+            for l in g["lots"]:
+                if l["emd"]:
+                    emds[l["emd"]].append(l)
+            g["emd"] = {}
+            for name, lst in emds.items():
+                if len(lst) < 2:
+                    continue
+                # 유료는 1시간 요금 싼 순(미기재 뒤), 그다음 무료 — 표에서 사람이 찾는 순서
+                lst.sort(key=lambda l: (l["fee"] == "무료", l["costs"][1] is None, l["costs"][1] or 0, l["name"]))
+                seg = name + ("-일대" if name in slugs else "")
+                g["emd"][name] = {"name": name, "lots": lst, "stats": stats(lst), "path": f"{s['slug']}/{g['name']}/{seg}/"}
+            g["emd"] = dict(sorted(g["emd"].items(), key=lambda kv: (-kv[1]["stats"]["n"], kv[0])))
+            for l in g["lots"]:
+                l["emd_path"] = g["emd"][l["emd"]]["path"] if l["emd"] in g["emd"] else ""
         s["sigungu"] = dict(sorted(s["sigungu"].items(), key=lambda kv: -kv[1]["stats"]["n"]))
     sidos = {k: sidos[k] for k in SIDO_ORDER if k in sidos}
     total = stats(lots)
@@ -210,6 +261,9 @@ def main():
         write(f"{s['slug']}/", "sido.html", s=s)
         for g in s["sigungu"].values():
             write(f"{s['slug']}/{g['name']}/", "sigungu.html", s=s, g=g)
+            for e in g["emd"].values():
+                e["others"] = [o for o in g["emd"].values() if o is not e][:24]
+                write(e["path"], "emd.html", s=s, g=g, e=e)
             for l in g["lots"]:
                 write(l["path"], "lot.html", s=s, g=g, l=l, near=find_nearby(l))
 
@@ -235,7 +289,7 @@ def main():
         (DIST / "ads.txt").write_text(f"google.com, {args.adsense_pub}, DIRECT, f08c47fec0942fa0\n")
     if args.cname:
         (DIST / "CNAME").write_text(args.cname + "\n")
-    print(f"built {len(urls)} pages ({len(lots)} lots, {sum(len(s['sigungu']) for s in sidos.values())} 시군구) -> {DIST}")
+    print(f"built {len(urls)} pages ({len(lots)} lots, {sum(len(s['sigungu']) for s in sidos.values())} 시군구, {sum(len(g['emd']) for s in sidos.values() for g in s['sigungu'].values())} 읍면동) -> {DIST}")
 
 
 if __name__ == "__main__":
