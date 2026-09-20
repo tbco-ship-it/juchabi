@@ -239,6 +239,42 @@ def main():
     (DIST / "static/index.json").write_text(payload)
     env.globals["index_v"] = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]  # cache key from the index itself, not from CSS edits
 
+    # 명절 무료개방 (행안부 15099790, data/holiday_free.json via scripts/normalize_holiday.py): 시도 → 시군구 → lots, 면수 많은 순
+    hraw = json.loads((ROOT / "data/holiday_free.json").read_text())
+    hsrc = hraw["source"]
+    hf = {"label": f"{hsrc['year']} {hsrc['holiday']}", "published": hsrc["published"], "url": hsrc["url"], "dates": hsrc["dates"], "n": len(hraw["lots"]),
+          "past": today.isoformat() > hsrc["dates"][-1], "kinds": Counter(l["org_kind"] for l in hraw["lots"]), "sidos": [], "always": []}
+    md = lambda d: f"{int(d[5:7])}/{int(d[8:10])}"
+    hf["range"] = f"{md(hsrc['dates'][0])}~{md(hsrc['dates'][-1])}"
+    for l in hraw["lots"]:
+        times = {t for _, t in l["days"]}
+        full = len(l["days"]) == len(hsrc["dates"])
+        if times == {"종일"}:
+            l["open_text"] = "연휴 종일" if full else ("종일 · " + ", ".join(md(d) for d, _ in l["days"]))
+        elif len(times) == 1:
+            l["open_text"] = (f"연휴 {times.pop()}" if full else ", ".join(md(d) for d, _ in l["days"]) + f" {l['days'][0][1]}")
+        else:
+            l["open_text"] = " · ".join(f"{md(d)} {t}" for d, t in l["days"])
+        if re.search(r"(평일|주말|공휴일|야간|상시|연중|매일|토요일|일요일)", l["note"]) and re.search(r"(개방|무료|이용)", l["note"]) and not re.search(r"미개방|명절\s*(에만|기간에만|한정|만)|불가", l["note"]):
+            hf["always"].append(l)
+    hby = defaultdict(lambda: defaultdict(list))
+    for l in hraw["lots"]:
+        hby[l["sido_slug"]][l["sigungu"]].append(l)
+    for slug in SIDO_ORDER:
+        if slug not in hby:
+            continue
+        s0 = sidos.get(slug)
+        gs = []
+        for name, lst in hby[slug].items():
+            lst.sort(key=lambda l: (-(l["spaces"] or 0), l["name"]))
+            kinds = Counter(l["org_kind"] for l in lst)
+            gs.append({"name": name, "lots": lst, "n": len(lst), "spaces": sum(l["spaces"] or 0 for l in lst),
+                       "kinds": " · ".join(f"{'학교' if k == '교육청' else k} {n}" for k, n in kinds.most_common())})
+        gs.sort(key=lambda g: (-g["n"], g["name"]))
+        hf["sidos"].append({"slug": slug, "short": s0["short"] if s0 else slug, "name": s0["name"] if s0 else slug, "sigungu": gs, "n": sum(g["n"] for g in gs),
+                            "spaces": sum(g["spaces"] for g in gs), "public_sigungu": set(s0["sigungu"]) if s0 else set()})
+    env.globals["hf"] = hf
+
     urls = []
 
     def write(path, template, **ctx):
@@ -255,6 +291,11 @@ def main():
     cheap_month = sorted([l for l in lots if l["month_won"] and l["month_won"] >= 10000], key=lambda l: l["month_won"])
     write("guide/monthly/", "guide_monthly.html", cheap=cheap_month[:60], by_sido={s["slug"]: sorted([l for l in s["lots"] if l["month_won"] and l["month_won"] >= 10000], key=lambda l: l["month_won"])[:10] for s in sidos.values()})
     write("guide/free-open/", "guide_free.html", free_open=[l for l in lots if l["free_open"]])
+    write("holiday-free/", "holiday.html")
+    for hs in hf["sidos"]:
+        write(f"holiday-free/{hs['slug']}/", "holiday_sido.html", s=hs)
+        for g in hs["sigungu"]:
+            write(f"holiday-free/{hs['slug']}/{g['name']}/", "holiday_sigungu.html", s=hs, g=g)
     find_nearby = make_nearby(lots)
     write("regions/", "regions.html")
     for s in sidos.values():

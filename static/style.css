@@ -684,7 +684,7 @@ button.next{appearance:none;-webkit-appearance:none;border:0;font-family:inherit
 .tbl.emd tr{padding:12px 10px;border-bottom:1px solid var(--bg)}.tbl.emd tbody tr:last-child{border-bottom:none}
 .tbl.emd td{display:inline;padding:0;border:0;white-space:normal;line-height:1.7}
 .tbl.emd td:first-child{display:block;font-size:1rem;line-height:1.35;margin-bottom:5px}
-.tbl.emd td+td+td::before{content:" · ";color:var(--muted)}
+.tbl.emd td+td+td::before{content:" · ";color:var(--muted)}.tbl.emd td:empty::before{content:none}
 .tbl.emd td[data-l]:not([data-l=""])::after{content:""}.tbl.emd td[data-l]:not([data-l=""]) {font-weight:600}
 .tbl.emd td[data-l]:not([data-l=""])::before{content:" · " attr(data-l) " ";color:var(--muted);font-weight:500}
 .tbl.emd td[data-l="1시간"]:not([data-l=""])::before{content:attr(data-l) " "}

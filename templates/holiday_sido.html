@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}{{ s.short }} 명절 무료개방 주차장 {{ s.n }}곳 — 추석·설 연휴 공공기관·학교 주차장 ({{ hf.label }} 기준) | {{ site }}{% endblock %}
+{% block description %}{{ s.name }} 추석·설 연휴 무료 개방 주차장 {{ s.n }}곳을 시군구별로. 행정안전부 {{ hf.label }} 명단 기준{% if hf.past %}, 2026 추석 명단 공개 시 갱신{% endif %}. 가장 많은 곳은 {{ s.sigungu[0].name }} {{ s.sigungu[0].n }}곳.{% endblock %}
+{% block content %}
+<nav class="crumbs"><a href="{{ base }}">홈</a> › <a href="{{ base }}holiday-free/">명절 무료개방</a> › {{ s.short }}</nav>
+<h1>{{ s.short }} 명절 무료개방 주차장</h1>
+<section class="sheet quiet">
+  <p class="sheet-label">{{ s.short }} · 행정안전부 {{ hf.label }} 명단</p>
+  <div class="sheet-num"><span class="num">{{ s.n }}</span><span class="pct">곳</span></div>
+  <p class="sheet-title">{{ s.sigungu|length }}개 시군구 · 주차면 합계 {{ '{:,}'.format(s.spaces) }}면</p>
+  <p class="sheet-text">{% if hf.past %}2026 추석 명단은 행안부 공개 즉시 갱신됩니다. 아래는 {{ hf.label }} 연휴에 개방했던 곳입니다.{% else %}{{ hf.label }} 연휴 {{ hf.range }} 개방.{% endif %} 시군구를 고르면 주차장별 주소·면수·개방 시간이 나옵니다.</p>
+</section>
+<div class="ad-slot"><!-- ad: holiday-sido --></div>
+<div class="sec"><div class="sec-h"><h2>시군구별</h2></div>
+<ul class="list">{% for g in s.sigungu %}<li><a href="{{ base }}holiday-free/{{ s.slug }}/{{ g.name }}/">{{ g.name }} <small>{{ g.kinds }}</small><span class="meta">{{ g.n }}곳</span></a></li>{% endfor %}</ul></div>
+<p class="muted small">출처: 행정안전부 「전국 명절 무료주차장 현황」({{ hf.label }}, 공공데이터포털 15099790). 평시 {{ s.short }} 공영주차장 요금은 <a href="{{ base }}{{ s.slug }}/">{{ s.short }} 공영주차장 요금</a>.</p>
+{% endblock %}

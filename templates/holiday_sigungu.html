@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}{{ g.name }} 명절 무료개방 주차장 {{ g.n }}곳 — 추석·설 연휴 개방 공공기관·학교 주차장 ({{ s.short }}, {{ hf.label }} 기준) | {{ site }}{% endblock %}
+{% block description %}{{ s.short }} {{ g.name }} 추석·설 연휴 무료 개방 주차장 {{ g.n }}곳: {% for l in g.lots[:3] %}{{ l.name }}{% if not loop.last %}, {% endif %}{% endfor %} 등. 주소·주차면수·개방 시간. 행정안전부 {{ hf.label }} 명단 기준{% if hf.past %}, 2026 추석 명단 공개 시 갱신{% endif %}.{% endblock %}
+{% block head %}<script type="application/ld+json">{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[{"@type":"Question","name":"{{ g.name }}에서 명절 연휴에 무료로 주차할 수 있는 곳은?","acceptedAnswer":{"@type":"Answer","text":"행정안전부 {{ hf.label }} 명단 기준 {{ g.name }}에는 {{ g.n }}곳({{ g.kinds }})이 무료 개방됩니다. 주차면이 가장 많은 곳은 {{ g.lots[0].name }}({{ g.lots[0].spaces or '면수 미기재' }}{% if g.lots[0].spaces %}면{% endif %}, {{ g.lots[0].addr }})입니다.{% if hf.past %} 2026 추석 명단은 행안부 공개 즉시 갱신됩니다.{% endif %}"}}]}</script>{% endblock %}
+{% block content %}
+<nav class="crumbs"><a href="{{ base }}">홈</a> › <a href="{{ base }}holiday-free/">명절 무료개방</a> › <a href="{{ base }}holiday-free/{{ s.slug }}/">{{ s.short }}</a> › {{ g.name }}</nav>
+<h1>{{ g.name }} 명절 무료개방 주차장</h1>
+<section class="sheet quiet">
+  <p class="sheet-label">{{ s.short }} {{ g.name }} · 행정안전부 {{ hf.label }} 명단</p>
+  <div class="sheet-num"><span class="num">{{ g.n }}</span><span class="pct">곳</span></div>
+  <p class="sheet-title">{{ g.kinds }} · 주차면 합계 {{ '{:,}'.format(g.spaces) }}면</p>
+  <p class="sheet-text">{% if hf.past %}<strong>2026 추석 명단은 공개 전</strong> — 아래는 {{ hf.label }} 연휴({{ hf.range }})에 개방했던 주차장이고, 행안부 추석 파일이 나오는 즉시 바뀝니다.{% else %}{{ hf.label }} 연휴 {{ hf.range }} 개방.{% endif %} 학교 운동장은 주차 불가인 곳이 많으니 참고사항을 보세요.</p>
+</section>
+<div class="ad-slot"><!-- ad: holiday-sigungu --></div>
+<div class="sec"><div class="sec-h"><h2>개방 주차장 <span class="muted small">주차면 많은 순</span></h2></div>
+<div class="tbl-wrap"><table class="tbl emd">
+<thead><tr><th>주차장 · 기관</th><th>주소</th><th>면수</th><th>개방</th><th>참고</th></tr></thead>
+<tbody>{% for l in g.lots %}
+<tr id="{{ loop.index }}"><td>{{ l.name }}<br><small class="muted">{{ l.org }} · {{ l.type }}</small></td>
+<td data-l="">{{ l.addr }}{% if l.detail %} <small class="muted">{{ l.detail }}</small>{% endif %}{% if l.lat %} <a class="muted" href="https://map.kakao.com/link/map/{{ l.name|urlencode }},{{ l.lat }},{{ l.lng }}" rel="noopener" target="_blank">지도</a>{% endif %}</td>
+<td data-l="">{% if l.spaces %}{{ l.spaces }}면{% else %}<span class="muted">면수 미기재</span>{% endif %}</td>
+<td data-l="개방">{{ l.open_text }}</td>
+<td data-l="">{% if l.note %}<small class="muted">{{ l.note }}</small>{% endif %}</td></tr>{% endfor %}
+</tbody></table></div>
+<p class="muted small">개방 칸: "연휴 종일" = 명단의 개방일 전부 종일 개방. 날짜가 적힌 곳은 그날만, 시간이 적힌 곳은 그 시간만 엽니다. 미개방 날은 표시하지 않았습니다.</p></div>
+{% if s.sigungu|length > 1 %}<div class="sec"><div class="sec-h"><h2>{{ s.short }}의 다른 시군구</h2><a href="{{ base }}holiday-free/{{ s.slug }}/">{{ s.short }} 전체 {{ s.n }}곳</a></div>
+<div class="chips">{% for o in s.sigungu if o.name != g.name %}<a class="chip" href="{{ base }}holiday-free/{{ s.slug }}/{{ o.name }}/">{{ o.name }} <small>{{ o.n }}</small></a>{% endfor %}</div></div>{% endif %}
+<p class="muted small">출처: 행정안전부 「전국 명절 무료주차장 현황」({{ hf.label }}, {{ hf.published }} 공개, <a href="{{ hf.url }}" rel="noopener">공공데이터포털 15099790</a>, 공공누리 1유형). 개방 여부·시간은 기관 사정으로 바뀔 수 있습니다. {% if g.name in s.public_sigungu %}{{ g.name }} 평시 공영주차장 요금은 <a href="{{ base }}{{ s.slug }}/{{ g.name }}/">{{ g.name }} 공영주차장 요금</a>.{% endif %}</p>
+{% endblock %}
