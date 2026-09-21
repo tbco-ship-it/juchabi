@@ -96,6 +96,8 @@ def make_nearby(lots):
 def fee_line(l):
     if l["fee"] == "무료":
         return "무료"
+    if l.get("eshare") and str(l.get("id", "")).startswith("eshare-"):
+        return l["fee"]
     if not l["basic_won"] and not l["add_won"]:
         return "요금 미기재" if l["fee"] == "유료" else f"{l['fee']} (요금 미기재)"
     if l["basic_won"] is not None and l["basic_min"]:
@@ -140,6 +142,8 @@ def weekend_cells(l):
 
 
 def hours_line(h):
+    if not h or len(h) < 2:
+        return ""
     o, c = h
     if not o or not c or o == c:
         return ""  # 00:00~00:00 은 미기재로 본다
@@ -162,7 +166,8 @@ def main():
     for l in lots:
         l["fee_line"] = fee_line(l)
         l["costs"] = {h: cost(l, h * 60) for h in HOURS}
-        l["h_week"], l["h_sat"], l["h_hol"] = hours_line(l["hours"]["weekday"]), hours_line(l["hours"]["sat"]), hours_line(l["hours"]["holiday"])
+        hours = l.get("hours") or {}
+        l["h_week"], l["h_sat"], l["h_hol"] = hours_line(hours.get("weekday")), hours_line(hours.get("sat")), hours_line(hours.get("holiday"))
         l["emd"] = emd_of(l)
         toks = l["addr"].split()
         l["locality"] = l["emd"] or next((t for t in toks[1:] if re.search(r"(읍|면|동|리|가|로|길)$", t) and not t.endswith(("시", "군", "구"))), "")
@@ -176,6 +181,8 @@ def main():
         if l["h_week"] and l["h_week"] != "24시간":
             ld["openingHours"] = "Mo-Fr " + l["h_week"].replace("~", "-")
         if l["fee"] in ("무료", "유료"):
+            ld["isAccessibleForFree"] = l["fee"] == "무료"
+        elif l.get("eshare"):
             ld["isAccessibleForFree"] = l["fee"] == "무료"
         l["ld"] = ld
         l["latest"] = max(l["ref_date"], "")
@@ -223,6 +230,23 @@ def main():
         s["sigungu"] = dict(sorted(s["sigungu"].items(), key=lambda kv: -kv[1]["stats"]["n"]))
     sidos = {k: sidos[k] for k in SIDO_ORDER if k in sidos}
     total = stats(lots)
+    open_lots = [l for l in lots if l.get("eshare")]
+    open_is_free = lambda l: bool(l.get("eshare") and l["eshare"].get("free") == "Y" and l["fee"] == "무료")
+    open_free_count = sum(open_is_free(l) for l in open_lots)
+    open_sidos = []
+    for s in sidos.values():
+        rows = [l for l in s["lots"] if l.get("eshare")]
+        if not rows:
+            continue
+        groups = defaultdict(list)
+        for l in rows:
+            groups[l["sigungu"]].append(l)
+        open_sidos.append({
+            "slug": s["slug"], "name": s["name"], "short": s["short"],
+            "n": len(rows), "free": sum(open_is_free(l) for l in rows),
+            "groups": [{"name": name, "lots": sorted(group, key=lambda l: (not open_is_free(l), l["name"]))}
+                       for name, group in sorted(groups.items(), key=lambda item: (-len(item[1]), item[0]))],
+        })
 
     h = hashlib.md5()
     for f in sorted((ROOT / "static").glob("*")):
@@ -317,6 +341,7 @@ def main():
     cheap_month = sorted([l for l in lots if general_month(l)], key=lambda l: l["month_won"])
     write("guide/monthly/", "guide_monthly.html", cheap=cheap_month[:60], by_sido={s["slug"]: sorted([l for l in s["lots"] if general_month(l)], key=lambda l: l["month_won"])[:10] for s in sidos.values()})
     write("guide/free-open/", "guide_free.html", free_open=[l for l in lots if l["free_open"]])
+    write("open/", "open.html", open_lots=open_lots, open_sidos=open_sidos, open_free_count=open_free_count)
     write("holiday-free/", "holiday.html")
     for hs in hf["sidos"]:
         write(f"holiday-free/{hs['slug']}/", "holiday_sido.html", s=hs)

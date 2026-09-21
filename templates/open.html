@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}공유누리 개방 주차장 {{ open_lots|length }}곳 — 무료 {{ open_free_count }}곳 | {{ site }}{% endblock %}
+{% block description %}공유누리에 기관이 등록한 개방 주차장 {{ open_lots|length }}곳. 무료·유료 여부, 기관 안내, 예약·상세 링크를 확인하세요.{% endblock %}
+{% block content %}
+<nav class="crumbs"><a href="{{ base }}">홈</a> › 공유누리 개방 주차장</nav>
+<h1>공유누리 개방 주차장</h1>
+<section class="sheet quiet">
+  <p class="sheet-label">공유누리 기관 개방 자원</p>
+  <div class="sheet-num"><span class="num">{{ open_lots|length }}</span><span class="pct">곳</span></div>
+  <p class="sheet-title">무료 {{ open_free_count }}곳 · 기관 안내 원문 제공</p>
+  <p class="sheet-text">공공기관이 공유누리에 등록한 개방 주차장입니다. 개방 조건과 실제 이용 가능 여부는 기관 원문과 공유누리 상세를 우선하세요.</p>
+</section>
+<div class="open-filter"><label><input id="open-free-only" type="checkbox"> 무료 주차장만 보기</label><span class="muted small">현재 페이지에서 바로 필터링합니다.</span></div>
+<div class="open-grid">
+{% for s in open_sidos %}<section class="sec open-region" data-open-region>
+  <div class="sec-h"><h2>{{ s.short }} <span class="muted small">{{ s.n }}곳 · 무료 {{ s.free }}</span></h2><a href="{{ base }}{{ s.slug }}/">지역 요금</a></div>
+  {% for g in s.groups %}<h3 class="open-group-title">{{ g.name }} <span class="muted small">{{ g.lots|length }}곳</span></h3>
+  <ul class="list open-list">{% for l in g.lots %}<li data-open-free="{{ '1' if l.fee == '무료' and l.eshare.free == 'Y' else '0' }}"><a href="{{ base }}{{ l.path }}"><span class="nm">{{ l.name }} <small>{{ l.org }}</small></span><span class="meta">{% if l.fee == '무료' and l.eshare.free == 'Y' %}무료{% elif l.eshare.free == 'Y' %}{{ l.fee }} · 무료 개방 시간대{% else %}{{ l.fee }}{% endif %} · 공유누리</span></a></li>{% endfor %}</ul>{% endfor %}
+</section>{% endfor %}
+</div>
+{% if not open_lots %}<p class="muted">현재 공유누리 개방 주차장 자료가 없습니다.</p>{% endif %}
+<p class="muted small">출처: 공유누리 개방자원 원자료. 기관별 기준일과 상세 안내는 각 주차장 페이지의 공유누리 링크에서 확인하세요.</p>
+{% endblock %}

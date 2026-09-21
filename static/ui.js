@@ -3,6 +3,21 @@
 (function () {
   const hdr = document.querySelector('header.top');
   if (hdr) document.documentElement.style.setProperty('--hdr', hdr.offsetHeight + 'px');
+  const freeToggle = document.getElementById('open-free-only');
+  if (freeToggle) {
+    const applyOpenFilter = () => {
+      document.querySelectorAll('[data-open-region]').forEach(region => {
+        let visible = 0;
+        region.querySelectorAll('[data-open-free]').forEach(row => {
+          const show = !freeToggle.checked || row.dataset.openFree === '1';
+          row.hidden = !show;
+          if (show) visible += 1;
+        });
+        region.hidden = visible === 0;
+      });
+    };
+    freeToggle.addEventListener('change', applyOpenFilter);
+  }
   if (matchMedia('(prefers-reduced-motion: reduce)').matches || !('IntersectionObserver' in window)) return;
   const SEL = ':scope > section:not(:first-of-type), :scope > .grid2, :scope > h2, :scope > .tbl, :scope > .prose, :scope > .sec, :scope > .sheet:not(:first-of-type), :scope > .week, :scope > .legend, :scope > .card, :scope > .list';
   const io = new IntersectionObserver(entries => {
