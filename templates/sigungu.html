@@ -10,7 +10,7 @@
   <div class="sheet-num"><span class="num{% if g.stats.h1_med is none and g.stats.free != g.stats.n %} small-num{% endif %}">{% if g.stats.h1_med is not none %}{{ g.stats.h1_med|won }}{% elif g.stats.free == g.stats.n %}무료{% else %}요금 미기재{% endif %}</span></div>
   <p class="sheet-title">{% if g.stats.h1_med is not none %}유료 주차장 1시간 요금 중앙값{% elif g.stats.free == g.stats.n %}등록된 {{ g.stats.n }}곳 모두 무료{% else %}유료 {{ g.stats.paid }}곳{% if g.stats.mixed %}, 부분 유료 {{ g.stats.mixed }}곳{% endif %}의 요금 항목이 비어 있습니다{% endif %}</p>
   {% if g.stats.h1_med is not none %}<p class="muted small">무료 주차장을 제외하고, 1시간 요금을 계산할 수 있는 {{ g.stats.h1_n }}곳의 중앙값입니다.</p>{% endif %}
-  <p class="sheet-text">전체 {{ g.stats.n }}곳 중 무료 {{ g.stats.free }}곳, 유료 {{ g.stats.paid }}곳{% if g.stats.mixed %}, 부분 유료 {{ g.stats.mixed }}곳{% endif %}. 월정기권 {{ g.stats.monthly }}곳{% if g.stats.free_open %}, 야간·주말 무료 개방 {{ g.stats.free_open }}곳{% endif %}.
+  <p class="sheet-text">전체 {{ g.stats.n }}곳 중 무료 {{ g.stats.free }}곳, 유료 {{ g.stats.paid }}곳{% if g.stats.mixed %}, 부분 유료 {{ g.stats.mixed }}곳{% endif %}. 월정기권 {{ g.stats.monthly }}곳{% if g.stats.free_open %}, 무료 개방 시간대가 안내된 곳 {{ g.stats.free_open }}곳{% endif %}.
   {% set ds = [] %}{% for k in CAT_ORDER %}{% if g.disc_summary[k] %}{% set _ = ds.append(CAT_LABEL[k] ~ ' ' ~ g.disc_summary[k][0][0] ~ '%') %}{% endif %}{% endfor %}{% if ds %}가장 흔한 감면: {{ ds|join(' · ') }}.{% else %}감면 문구가 데이터에 없어 {{ g.name }} 조례 확인이 필요합니다.{% endif %}</p>
 </section>
 <div class="ad-slot"><!-- ad: sigungu --></div>

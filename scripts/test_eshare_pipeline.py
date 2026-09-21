@@ -4,11 +4,13 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from normalize_eshare import (  # noqa: E402
     analyze_rows,
+    canonical_output_path,
     _new_lot,
     _source_digest,
     apply_candidate,
@@ -26,8 +28,15 @@ from normalize_eshare import (  # noqa: E402
     safe_eshare_url,
     source_name_text,
 )
-from build import weekend_cells  # noqa: E402
+from build import (  # noqa: E402
+    ESHARE_WINDOW_FREE_TEXT,
+    canonical_output_path as build_canonical_output_path,
+    is_time_window_free_open,
+    weekend_cells,
+)
+import fetch_eshare as fetch_eshare_module  # noqa: E402
 from fetch_eshare import (  # noqa: E402
+    TRANSITION_NAME,
     _prepare_manifest,
     _validate_budget_limit,
     extract_items,
@@ -126,10 +135,34 @@ class EsharePipelineTests(unittest.TestCase):
         )
         self.assertEqual(source_name_text(row), "내죽도공원 제1노상 주차장")
 
+    def test_generic_daddr_cannot_hide_primary_name_number_conflict(self):
+        result = analyze_rows(
+            [source(
+                rsrcNo="NUMBER-CONFLICT",
+                rsrcNm="알파 제12 주차장",
+                daddr="알파 주차장",
+                addr="서울특별시 알파구 테헤란로 11",
+            )],
+            [lot(name="알파 제1 주차장")],
+        )
+        self.assertFalse(result["matched"])
+        self.assertFalse(result["new_lots"])
+        self.assertEqual(result["reviews"][0]["reason"], "insufficient_or_conflicting_evidence")
+
     def test_zero_won_is_not_paid_evidence_but_positive_amount_is(self):
         for note in ("사용료: 0원", "사용료: 0 원", "사용료: 0.0원"):
             self.assertEqual(fee_evidence(note, "Y")[:2], ("무료", False))
         self.assertEqual(fee_evidence("최초 30분 0원, 이후 1,000원", "Y")[:2], ("혼합", True))
+
+    def test_zero_allowance_does_not_hide_later_charge_clause(self):
+        for note in (
+            "최초 30분 0원, 이후 주차요금 부과",
+            "최초 30분 0원\n이후 주차요금 부과",
+        ):
+            fee, reviewed, raw = fee_evidence(note, "Y")
+            self.assertEqual((fee, reviewed), ("혼합", True))
+            self.assertIn("요금 부과", raw["공유누리"])
+        self.assertEqual(fee_evidence("사용료: 없음", "Y")[:2], ("무료", False))
 
     def test_paid_signal_after_display_limit_is_classified(self):
         long_note = "무료 안내 " * 100 + "평일 09~18시 유료, 최초 30분 600원"
@@ -150,6 +183,20 @@ class EsharePipelineTests(unittest.TestCase):
             weekend_cells({"fee": "무료", "id": "eshare-1", "eshare": {"free": "Y"}, "open_days": "평일 미개방 · 토 09:00~18:00 · 휴일 미개방"}),
             {"sat": "미확인", "hol": "미확인"},
         )
+
+    def test_matched_share_nuri_metadata_preserves_legacy_weekend_evidence(self):
+        self.assertEqual(
+            weekend_cells({
+                "fee": "유료", "id": "legacy-1", "eshare": {"free": "Y"},
+                "open_days": "평일 10:00~14:00 · 토 미개방 · 휴일 미개방",
+                "seoul_code": "123", "sat_free": False, "hol_free": True,
+            }),
+            {"sat": "유료", "hol": "무료"},
+        )
+
+    def test_generic_share_nuri_free_window_is_not_night_weekend_evidence(self):
+        self.assertFalse(is_time_window_free_open({"eshare": {"rsrcNo": "1"}, "free_open": ESHARE_WINDOW_FREE_TEXT}))
+        self.assertTrue(is_time_window_free_open({"free_open": "주말·공휴일 무료 개방"}))
 
     def test_assign_new_paths_reserves_final_slug(self):
         existing = [lot(slug="foo"), lot(id="legacy-2", slug="foo-2")]
@@ -181,6 +228,48 @@ class EsharePipelineTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 _validate_budget_limit(1001)
 
+    def test_interrupted_snapshot_rollover_fails_closed_and_recovers_fresh(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out_dir = Path(directory)
+            _prepare_manifest(out_dir, 100)
+            (out_dir / "list-page-0001.json").write_text(json.dumps([{"rsrcNo": "R", "freeYn": "Y"}]))
+            (out_dir / "detail-batch-0001.json").write_text(json.dumps([{"rsrcNo": "R", "freeYn": "Y"}]))
+            (out_dir / "eshare_20260921.json").write_text(json.dumps({"list": [{"rsrcNo": "R", "freeYn": "Y"}], "detail": [{"rsrcNo": "R", "freeYn": "Y"}]}))
+
+            def move_one_then_fail(path, archive_name):
+                archive = path / "snapshots" / archive_name
+                archive.mkdir(parents=True, exist_ok=True)
+                files = fetch_eshare_module._snapshot_files(path)
+                files[0].replace(archive / files[0].name)
+                raise OSError("simulated interruption")
+
+            with patch.object(fetch_eshare_module, "_archive_snapshot_files", side_effect=move_one_then_fail):
+                with self.assertRaises(OSError):
+                    _prepare_manifest(out_dir, 100, fresh_snapshot=True)
+            self.assertTrue((out_dir / TRANSITION_NAME).exists())
+            with self.assertRaisesRegex(RuntimeError, "transition is incomplete"):
+                _prepare_manifest(out_dir, 100)
+
+            _prepare_manifest(out_dir, 100, fresh_snapshot=True)
+            self.assertFalse((out_dir / TRANSITION_NAME).exists())
+            self.assertTrue((out_dir / "manifest.json").exists())
+            self.assertFalse((out_dir / "list-page-0001.json").exists())
+            self.assertFalse((out_dir / "detail-batch-0001.json").exists())
+            archived = list((out_dir / "snapshots").glob("*/list-page-0001.json"))
+            self.assertEqual(len(archived), 1)
+
+    def test_fetch_manifest_and_transition_marker_reject_malformed_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out_dir = Path(directory)
+            (out_dir / "manifest.json").write_text(json.dumps(["not", "an", "object"]))
+            with self.assertRaisesRegex(RuntimeError, "manifest is not an object"):
+                _prepare_manifest(out_dir, 100)
+
+            (out_dir / "manifest.json").unlink()
+            (out_dir / TRANSITION_NAME).write_text(json.dumps({"archive_name": "../escape"}))
+            with self.assertRaisesRegex(RuntimeError, "archive name is unsafe"):
+                _prepare_manifest(out_dir, 100, fresh_snapshot=True)
+
     def test_apply_rejects_duplicate_destinations_before_dict_comprehension(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -203,6 +292,32 @@ class EsharePipelineTests(unittest.TestCase):
             candidate_path.write_text(json.dumps(candidate, ensure_ascii=False))
             with self.assertRaisesRegex(RuntimeError, "more than once"):
                 apply_candidate(candidate, data_path, raw_path, candidate_path, __import__("hashlib").sha256(candidate_path.read_bytes()).hexdigest())
+
+    def test_apply_rejects_dot_segment_and_preserves_data(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data_path = root / "lots.json"
+            raw_path = root / "raw.json"
+            candidate_path = root / "candidate.json"
+            data = {"source": {}, "lots": [lot(path="seoul/알파구/알파/")]}
+            data_path.write_text(json.dumps(data, ensure_ascii=False))
+            raw_path.write_text(json.dumps({"list": [{"rsrcNo": "1"}], "detail": [{"rsrcNo": "1"}]}))
+            candidate = {
+                "version": 2,
+                "source": {"input_sha256": __import__("hashlib").sha256(raw_path.read_bytes()).hexdigest()},
+                "lots_sha256": _source_digest(data["lots"]),
+                "matched": [],
+                "new_lots": [{"id": "eshare-1", "path": "seoul/알파구/./알파/", "eshare": {"rsrcNo": "1"}}],
+            }
+            candidate_path.write_text(json.dumps(candidate, ensure_ascii=False))
+            before = data_path.read_bytes()
+            with self.assertRaisesRegex(RuntimeError, "unsafe relative output path"):
+                apply_candidate(candidate, data_path, raw_path, candidate_path, __import__("hashlib").sha256(candidate_path.read_bytes()).hexdigest())
+            self.assertEqual(data_path.read_bytes(), before)
+
+    def test_output_route_identity_is_slash_canonical(self):
+        self.assertEqual(canonical_output_path("seoul/알파구/알파/"), "seoul/알파구/알파/")
+        self.assertEqual(build_canonical_output_path("seoul/알파구/알파"), build_canonical_output_path("seoul/알파구/알파/"))
 
     def test_source_url_is_https_and_host_bound(self):
         self.assertEqual(safe_eshare_url("https://www.eshare.go.kr/detail/1"), "https://www.eshare.go.kr/detail/1")

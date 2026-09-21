@@ -7,6 +7,7 @@ owner supplied a complete raw artifact and explicitly prohibited re-fetching.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import datetime as dt
 import hashlib
 import json
@@ -29,6 +30,8 @@ DEFAULT_OUT = ROOT / "data/raw/eshare"
 KST = ZoneInfo("Asia/Seoul")
 MAX_DAILY_CALLS = 1000
 MANIFEST_NAME = "manifest.json"
+SNAPSHOT_LOCK_NAME = ".snapshot.lock"
+TRANSITION_NAME = ".snapshot-transition.json"
 
 
 def today_kst() -> str:
@@ -41,6 +44,22 @@ def _budget_path(out_dir: Path) -> Path:
 
 def _budget_lock_path(out_dir: Path) -> Path:
     return out_dir / "budget.json.lock"
+
+
+def _snapshot_lock_path(out_dir: Path) -> Path:
+    return out_dir / SNAPSHOT_LOCK_NAME
+
+
+@contextmanager
+def _snapshot_lock(out_dir: Path):
+    """Serialize rollover, cache reuse, requests, and publication per output dir."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    with _snapshot_lock_path(out_dir).open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
 def _validate_budget_limit(limit: int) -> int:
@@ -213,41 +232,111 @@ def _request_config(page_size: int) -> dict[str, object]:
             "list_body": ["pageNo", "numOfRows"], "detail_body": ["rsrcNoList"]}
 
 
-def _prepare_manifest(out_dir: Path, page_size: int, fresh_snapshot: bool = False) -> dict[str, object]:
+def _snapshot_files(out_dir: Path) -> list[Path]:
+    patterns = ("list-page-*.json", "detail-batch-*.json", "eshare_*.json")
+    files: set[Path] = set()
+    for pattern in patterns:
+        files.update(path for path in out_dir.glob(pattern) if path.is_file())
+    manifest = out_dir / MANIFEST_NAME
+    if manifest.is_file():
+        files.add(manifest)
+    return sorted(files, key=lambda path: path.name)
+
+
+def _new_archive_name(out_dir: Path, old_id: str) -> str:
+    base = re.sub(r"[^A-Za-z0-9_.-]", "-", old_id or "old") or "old"
+    snapshots = out_dir / "snapshots"
+    suffix = 1
+    while True:
+        name = base if suffix == 1 else f"{base}-{suffix}"
+        if not (snapshots / name).exists():
+            return name
+        suffix += 1
+
+
+def _validated_archive_name(value: object) -> str:
+    if not isinstance(value, str) or value in {"", ".", ".."} or not re.fullmatch(r"[A-Za-z0-9_.-]+", value):
+        raise RuntimeError("snapshot transition archive name is unsafe")
+    return value
+
+
+def _archive_snapshot_files(out_dir: Path, archive_name: str) -> None:
+    archive = out_dir / "snapshots" / archive_name
+    archive.mkdir(parents=True, exist_ok=True)
+    for cached in _snapshot_files(out_dir):
+        target = archive / cached.name
+        if target.exists():
+            raise RuntimeError(f"snapshot archive collision: {target.name}")
+        cached.replace(target)
+
+
+def _prepare_manifest_unlocked(out_dir: Path, page_size: int, fresh_snapshot: bool = False) -> dict[str, object]:
     config = _request_config(page_size)
     fingerprint = hashlib.sha256(json.dumps(config, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
     path = out_dir / MANIFEST_NAME
+    transition_path = out_dir / TRANSITION_NAME
+    transition = None
+    if transition_path.exists():
+        try:
+            transition = json.loads(transition_path.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError("snapshot transition marker is corrupt; refusing to resume") from exc
+        if not isinstance(transition, dict) or not transition.get("archive_name"):
+            raise RuntimeError("snapshot transition marker is invalid; refusing to resume")
+        _validated_archive_name(transition["archive_name"])
+        if not fresh_snapshot:
+            raise RuntimeError("snapshot transition is incomplete; use --new-snapshot")
+
+    archive_name: str | None = None
+    if transition is not None:
+        archive_name = _validated_archive_name(transition["archive_name"])
+
+    manifest = None
     if path.exists():
         try:
             manifest = json.loads(path.read_text())
         except (OSError, json.JSONDecodeError) as exc:
-            raise RuntimeError("fetch manifest is corrupt; refusing to resume") from exc
+            if not fresh_snapshot:
+                raise RuntimeError("fetch manifest is corrupt; refusing to resume") from exc
+            manifest = {"snapshot_id": "corrupt-manifest"}
+        if not isinstance(manifest, dict):
+            if not fresh_snapshot:
+                raise RuntimeError("fetch manifest is not an object; refusing to resume")
+            manifest = {"snapshot_id": "invalid-manifest"}
         if manifest.get("request_fingerprint") != fingerprint or fresh_snapshot:
             if not fresh_snapshot:
                 raise RuntimeError("fetch cache parameters changed; use --new-snapshot or a new out-dir")
-            old_id = re.sub(r"[^A-Za-z0-9_.-]", "-", str(manifest.get("snapshot_id") or "old"))
-            archive = out_dir / "snapshots" / old_id
-            suffix = 2
-            while archive.exists():
-                archive = out_dir / "snapshots" / f"{old_id}-{suffix}"
-                suffix += 1
-            archive.mkdir(parents=True, exist_ok=False)
-            for cached in list(out_dir.glob("list-page-*.json")) + list(out_dir.glob("detail-batch-*.json")) + list(out_dir.glob("eshare_*.json")) + [path]:
-                if cached.exists():
-                    cached.replace(archive / cached.name)
+            archive_name = archive_name or _new_archive_name(out_dir, str(manifest.get("snapshot_id") or "old"))
     else:
-        stale = list(out_dir.glob("list-page-*.json")) + list(out_dir.glob("detail-batch-*.json"))
+        stale = _snapshot_files(out_dir)
         if stale and not fresh_snapshot:
             raise RuntimeError("fetch cache has no manifest; refusing to resume unbound files")
         if stale and fresh_snapshot:
-            archive = out_dir / "snapshots" / f"unbound-{int(time.time())}"
-            archive.mkdir(parents=True, exist_ok=False)
-            for cached in stale:
-                cached.replace(archive / cached.name)
+            archive_name = archive_name or _new_archive_name(out_dir, f"unbound-{int(time.time())}")
+
+    if archive_name:
+        if transition is None:
+            _atomic_write_json(transition_path, {
+                "version": 1,
+                "archive_name": archive_name,
+                "reason": "fresh_snapshot",
+            })
+        _archive_snapshot_files(out_dir, archive_name)
+
     manifest = {"version": 1, "snapshot_id": f"{config['date']}-{fingerprint[:12]}",
                 "request_fingerprint": fingerprint, **config}
     _atomic_write_json(path, manifest)
+    if transition_path.exists():
+        transition_path.unlink()
     return manifest
+
+
+def _prepare_manifest(out_dir: Path, page_size: int, fresh_snapshot: bool = False, *, _lock_held: bool = False) -> dict[str, object]:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if _lock_held:
+        return _prepare_manifest_unlocked(out_dir, page_size, fresh_snapshot=fresh_snapshot)
+    with _snapshot_lock(out_dir):
+        return _prepare_manifest_unlocked(out_dir, page_size, fresh_snapshot=fresh_snapshot)
 
 
 def post_json(url: str, body: dict, timeout: float = 60) -> object:
@@ -265,13 +354,7 @@ def api_call(url: str, body: dict, out_dir: Path, budget: dict[str, int | str], 
         raise RuntimeError(f"ShareNuri request failed: {type(exc).__name__}") from exc
 
 
-def fetch_all(key: str, out_dir: Path, page_size: int, budget_limit: int, timeout: float, pause: float,
-              fresh_snapshot: bool = False) -> dict:
-    if not isinstance(page_size, int) or isinstance(page_size, bool) or not 1 <= page_size <= 100:
-        raise ValueError("page_size must be between 1 and 100")
-    _validate_budget_limit(budget_limit)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    _prepare_manifest(out_dir, page_size, fresh_snapshot=fresh_snapshot)
+def _fetch_all_unlocked(key: str, out_dir: Path, page_size: int, budget_limit: int, timeout: float, pause: float) -> dict:
     budget = load_budget(out_dir, budget_limit)
     list_rows: list[dict] = []
     page = 1
@@ -353,6 +436,17 @@ def fetch_all(key: str, out_dir: Path, page_size: int, budget_limit: int, timeou
     _atomic_write_json(output, result)
     current_budget = load_budget(out_dir, budget_limit)
     return {"output": str(output), "list": len(list_rows), "detail": len(detail_rows), "calls": current_budget["calls"]}
+
+
+def fetch_all(key: str, out_dir: Path, page_size: int, budget_limit: int, timeout: float, pause: float,
+              fresh_snapshot: bool = False) -> dict:
+    if not isinstance(page_size, int) or isinstance(page_size, bool) or not 1 <= page_size <= 100:
+        raise ValueError("page_size must be between 1 and 100")
+    _validate_budget_limit(budget_limit)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    with _snapshot_lock(out_dir):
+        _prepare_manifest_unlocked(out_dir, page_size, fresh_snapshot=fresh_snapshot)
+        return _fetch_all_unlocked(key, out_dir, page_size, budget_limit, timeout, pause)
 
 
 def validate_raw(path: Path) -> dict[str, int]:

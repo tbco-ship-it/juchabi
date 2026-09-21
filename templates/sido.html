@@ -8,7 +8,7 @@
   <p class="sheet-label">{{ s.short }} 공영주차장</p>
   <div class="sheet-num"><span class="num">{{ s.stats.n }}</span><span class="pct">곳</span></div>
   <p class="sheet-title">무료 {{ s.stats.free }}곳 · 유료 {{ s.stats.paid }}곳{% if s.stats.mixed %}, 부분 유료 {{ s.stats.mixed }}곳{% endif %}{% if s.stats.h1_med is not none %} · 유료 1시간 중앙값 {{ s.stats.h1_med|won }}{% endif %}</p>
-  <p class="sheet-text">월정기권 운영 {{ s.stats.monthly }}곳, 야간·주말 무료 개방 {{ s.stats.free_open }}곳. 감면 문구가 있는 주차장: {% for k, n in s.stats.disc %}{{ CAT_LABEL[k] }} {{ n }}곳{% if not loop.last %}, {% endif %}{% endfor %}.</p>
+  <p class="sheet-text">월정기권 운영 {{ s.stats.monthly }}곳, 무료 개방 시간대가 안내된 곳 {{ s.stats.free_open }}곳. 감면 문구가 있는 주차장: {% for k, n in s.stats.disc %}{{ CAT_LABEL[k] }} {{ n }}곳{% if not loop.last %}, {% endif %}{% endfor %}.</p>
 </section>
 <div class="ad-slot"><!-- ad: sido --></div>
 <div class="sec"><div class="sec-h"><h2>시군구별</h2></div>

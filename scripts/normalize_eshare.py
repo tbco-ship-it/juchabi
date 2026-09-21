@@ -14,6 +14,7 @@ import html
 import json
 import math
 import os
+import posixpath
 import random
 import re
 import tempfile
@@ -137,9 +138,9 @@ def source_name_text(row: dict[str, Any]) -> str:
                     best_start = match.start()
     if best_start is not None:
         return text[:best_start].rstrip(" ,-/")
-    daddr = str(row.get("daddr") or "").strip()
-    if daddr and "주차" in daddr and not daddr.startswith("("):
-        return daddr
+    # ``daddr`` is a provider display/location hint, not a replacement for
+    # the primary facility name.  Falling back to it can erase facility
+    # numbers (e.g. 제12 vs 제1) and let a conflicting weak-name match pass.
     return text
 
 
@@ -329,6 +330,25 @@ def fee_evidence(note: str, free_code: str) -> tuple[str, bool, dict[str, str]]:
     fee_label = re.compile(r"(?:사용|이용|주차|충전)?요금(?:정보)?|(?:사용|이용)료(?!\s*(?:납부|환불|안내|조건|취소))")
     free_value = re.compile(r"^(?:무료|무료이용|무료운영|없음|무|해당없음|해당 사항 없음|해당사항 없음|해당사항없음|없습니다?)(?:\s*[.。,/)]|\s*$)")
     amount_pattern = re.compile(r"(?<!\d)(\d[\d,]*(?:\.\d+)?)\s*원")
+
+    def explicit_charge(value: str) -> bool:
+        """Return whether a fee-label value explicitly says charging applies.
+
+        A zero-priced allowance and a later ``요금 부과`` clause may share one
+        line.  The zero-amount exception must not hide that later clause, but
+        Negative forms are excluded from this specific signal; the existing
+        conservative fee-label fallback remains unchanged for other text.
+        """
+        for match in re.finditer(r"유료|부과|징수|청구|납부|발생|적용", value):
+            suffix = value[match.end():]
+            prefix = value[:match.start()]
+            if re.match(r"\s*(?:없음|없습니다?|안함|하지\s*않|되지\s*않|아님|아니)", suffix):
+                continue
+            if re.search(r"(?:미|안)\s*$", prefix):
+                continue
+            return True
+        return False
+
     for line in lines:
         amounts: list[Decimal] = []
         for amount in amount_pattern.findall(line):
@@ -346,8 +366,10 @@ def fee_evidence(note: str, free_code: str) -> tuple[str, bool, dict[str, str]]:
         for match in fee_label.finditer(line):
             value = line[match.end():].lstrip(" \t:：>)-=")
             value = value.split("<", 1)[0].strip(" \t:：>)-=/.,。")
-            if (value and "무료" not in value and not free_value.match(value)
-                    and not (amounts and not has_positive_amount)):
+            if explicit_charge(value):
+                fee_lines.append(line)
+            elif (value and "무료" not in value and not free_value.match(value)
+                  and not (amounts and not has_positive_amount)):
                 fee_lines.append(line)
     if free_code == "N":
         return "유료", True, {"공유누리": (fee_lines[0] if fee_lines else "freeYn=N")}
@@ -594,12 +616,21 @@ def assign_new_paths(lots: list[dict[str, Any]], new_lots: list[dict[str, Any]])
 
 def _validate_relative_output_path(value: Any) -> str:
     path = str(value or "")
+    raw_parts = path.split("/")
+    interior_parts = raw_parts[:-1] if path.endswith("/") else raw_parts
     parts = Path(path).parts
     if (not path or not path.endswith("/") or path.startswith("/") or "\\" in path
-            or "\x00" in path or any(part in {"", ".", ".."} for part in parts)
+            or "\x00" in path or any(part in {"", ".", ".."} for part in interior_parts)
+            or any(part in {".", ".."} for part in parts)
             or Path(path).is_absolute()):
         raise RuntimeError(f"unsafe relative output path: {value!r}")
     return path
+
+
+def canonical_output_path(value: Any) -> str:
+    """Return the physical route identity after strict path validation."""
+    path = _validate_relative_output_path(value)
+    return posixpath.normpath(path).rstrip("/") + "/"
 
 
 def _source_digest(lots: list[dict[str, Any]]) -> str:
@@ -697,7 +728,7 @@ def apply_candidate(candidate: dict[str, Any], data_path: Path, raw_path: Path, 
         for index, lot in enumerate(data["lots"]):
             existing_ids.add(str(lot.get("id") or ""))
             if lot.get("path"):
-                existing_paths.add(str(lot["path"]))
+                existing_paths.add(canonical_output_path(lot["path"]))
             source = lot.get("eshare")
             if isinstance(source, dict) and source.get("rsrcNo"):
                 existing_source_ids[str(source["rsrcNo"])].append(index)
@@ -709,7 +740,7 @@ def apply_candidate(candidate: dict[str, Any], data_path: Path, raw_path: Path, 
             raise RuntimeError(f"candidate rsrcNo already present: {already_present[:3]}")
 
         new_ids = [str(lot.get("id") or "") for lot in new_lots]
-        new_paths = [str(lot.get("path") or "") for lot in new_lots]
+        new_paths = [canonical_output_path(lot.get("path")) for lot in new_lots]
         if any(not value for value in new_ids) or len(new_ids) != len(set(new_ids)):
             raise RuntimeError("candidate contains missing or duplicate new lot ids")
         if len(new_paths) != len(set(new_paths)):

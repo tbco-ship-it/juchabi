@@ -25,6 +25,7 @@ CAT_LABEL = {"light": "경차", "green": "저공해·전기차", "disabled": "�
 CAT_ORDER = ["light", "green", "disabled", "multi", "veteran", "senior", "pregnant", "rotation"]
 HOURS = [1, 2, 3, 5, 8]
 NEXT_HOLIDAY = {"label": "2026 추석", "short": "추석(9/25)", "date": "2026-09-27"}  # the holiday the 행안부 file is awaited for; after its last day the page says so instead
+ESHARE_WINDOW_FREE_TEXT = "공유누리 개방 무료 · 개방 시간은 기관 안내 참조"
 
 
 def won(n):
@@ -110,6 +111,20 @@ def fee_line(l):
     return "요금 미기재" if l["fee"] == "유료" else f"{l['fee']} (요금 미기재)"
 
 
+def is_time_window_free_open(l):
+    """Count only evidence-backed free-opening notes, not ShareNuri's generic flag."""
+    return bool(l.get("free_open")) and not (
+        l.get("eshare") and l.get("free_open") == ESHARE_WINDOW_FREE_TEXT
+    )
+
+
+def canonical_output_path(path):
+    value = str(path or "")
+    if not value:
+        return ""
+    return value.rstrip("/") + "/"
+
+
 _EMD = re.compile(r"(?:^|\s|\()([가-힣0-9]+(?:읍|면|동|가))(?=$|\s|[,)])")
 
 
@@ -131,7 +146,7 @@ def weekend_cells(l):
     # not evidence that Saturday or holidays are free, especially when the
     # raw notice explicitly says those days are closed.  Legacy rows retain
     # their existing weekend evidence.
-    if l.get("eshare") and (str(l.get("id", "")).startswith("eshare-") or l.get("open_days")):
+    if l.get("eshare") and str(l.get("id", "")).startswith("eshare-"):
         return {"sat": "미확인", "hol": "미확인"}
     if l["fee"] == "무료":
         return {"sat": "무료", "hol": "무료"}
@@ -178,6 +193,7 @@ def main():
         toks = l["addr"].split()
         l["locality"] = l["emd"] or next((t for t in toks[1:] if re.search(r"(읍|면|동|리|가|로|길)$", t) and not t.endswith(("시", "군", "구"))), "")
         l["wk"] = weekend_cells(l)
+        l["eshare_window_free"] = bool(l.get("eshare") and l.get("free_open") == ESHARE_WINDOW_FREE_TEXT)
         l["disc_list"] = [(k, CAT_LABEL[k], v["pct"], v["text"]) for k in CAT_ORDER for v in [l["discounts"].get(k)] if v]
         ld = {"@context": "https://schema.org", "@type": "ParkingFacility", "name": l["name"], "address": {"@type": "PostalAddress", "streetAddress": l["addr"], "addressCountry": "KR"}}
         if l["lat"]:
@@ -208,7 +224,7 @@ def main():
                 "h1_med": median(h1) if h1 else None, "h1_n": len(h1),
                 "h1_min": h1[0] if h1 else None, "h1_max": h1[-1] if h1 else None,
                 "weekend_free": len([l for l in paid if l.get("sat_free") or l.get("hol_free")]),
-                "monthly": len([l for l in lst if l["month_won"]]), "free_open": len([l for l in lst if l["free_open"]]),
+                "monthly": len([l for l in lst if l["month_won"]]), "free_open": len([l for l in lst if is_time_window_free_open(l)]),
                 "disc": Counter(k for l in lst for k in l["discounts"]).most_common(4),
                 "latest": max((l["ref_date"] for l in lst), default="")}
     for s in sidos.values():
@@ -273,7 +289,7 @@ def main():
     sido_idx = {s["slug"]: i for i, s in enumerate(sidos.values())}
     r5 = lambda x: round(x, 5) if x is not None else None
     items = [[l["name"], sido_idx[l["sido_slug"]], l["sigungu"], l["locality"], 0 if l["slug"] == re.sub(r"\s+", "", l["name"]) else l["slug"], r5(l["lat"]), r5(l["lng"]), {"무료": 0, "유료": 1}.get(l["fee"], 2),
-              l["basic_min"], l["basic_won"], l["add_min"], l["add_won"], l["day_won"], None if l.get("month_scope") == "staff" else l["month_won"], 1 if l["free_open"] else 0, l["spaces"],
+              l["basic_min"], l["basic_won"], l["add_min"], l["add_won"], l["day_won"], None if l.get("month_scope") == "staff" else l["month_won"], 1 if is_time_window_free_open(l) else 0, l["spaces"],
               [l["costs"][hh] for hh in HOURS], l.get("restricted") or 0] for l in lots]  # 16: precomputed 1/2/3/5/8h — JS never recomputes; 17: '외부차량 출입금지' etc. — free of charge but not for passers-by
     stations = json.loads((ROOT / "data/stations.json").read_text())["stations"]  # [name, lat, lng] — "거제역" searches resolve to the station, then the nearest lots
     payload = json.dumps({"sidos": sido_list, "items": items, "stations": stations}, ensure_ascii=False, separators=(",", ":"))
@@ -333,6 +349,10 @@ def main():
         value = str(path)
         if "\\" in value or "\x00" in value or "//" in value:
             raise ValueError(f"unsafe output path: {path!r}")
+        raw_parts = value.split("/")
+        interior_parts = raw_parts[:-1] if value.endswith("/") else raw_parts
+        if any(part in {".", ".."} for part in interior_parts):
+            raise ValueError(f"unsafe output path: {path!r}")
         relative = Path(value)
         if relative.is_absolute() or ".." in relative.parts or "." in relative.parts:
             raise ValueError(f"unsafe output path: {path!r}")
@@ -343,10 +363,11 @@ def main():
         return out
 
     def write(path, template, **ctx):
-        if path in written:
-            raise ValueError(f"duplicate output path: {path}")  # a second write would silently replace another page
-        written.add(path)
         out = safe_output_dir(path)
+        canonical = canonical_output_path(path)
+        if canonical in written:
+            raise ValueError(f"duplicate output path: {path}")  # a second write would silently replace another page
+        written.add(canonical)
         out.mkdir(parents=True, exist_ok=True)
         (out / "index.html").write_text(env.get_template(template).render(path=path, **ctx))
         urls.append(path)
@@ -359,7 +380,7 @@ def main():
     general_month = lambda l: l["month_won"] and l["month_won"] >= 10000 and l.get("month_scope") != "staff"  # '월정기권 시청직원에 한함' is not a public price
     cheap_month = sorted([l for l in lots if general_month(l)], key=lambda l: l["month_won"])
     write("guide/monthly/", "guide_monthly.html", cheap=cheap_month[:60], by_sido={s["slug"]: sorted([l for l in s["lots"] if general_month(l)], key=lambda l: l["month_won"])[:10] for s in sidos.values()})
-    write("guide/free-open/", "guide_free.html", free_open=[l for l in lots if l["free_open"]])
+    write("guide/free-open/", "guide_free.html", free_open=[l for l in lots if is_time_window_free_open(l)])
     write("open/", "open.html", open_lots=open_lots, open_sidos=open_sidos, open_free_count=open_free_count)
     write("holiday-free/", "holiday.html")
     for hs in hf["sidos"]:
