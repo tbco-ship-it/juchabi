@@ -33,6 +33,8 @@
   let D, ST = [];
   const dist = (la, lo) => l => { const dLat = (l.lat - la) * Math.PI / 180, dLng = (l.lng - lo) * Math.PI / 180; const a = Math.sin(dLat / 2) ** 2 + Math.cos(la * Math.PI / 180) * Math.cos(l.lat * Math.PI / 180) * Math.sin(dLng / 2) ** 2; return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); };
   const fmtKm = d => d < 1 ? Math.round(d * 1000) + ' m' : d.toFixed(1) + ' km';
+  // straight-line km → '🚶 약 N분': 4.5 km/h plus 25 % for the real street path (≈ Naver's walking estimate); past 2 km (~35 min) it's not a walk, say nothing
+  const walk = d => d <= 2 ? ` · 🚶 약 ${Math.max(1, Math.ceil(d * 1000 * 1.25 / 75))}분` : '';
   // nearest lots to a point (station or GPS); freeOnly keeps 무료 lots
   const nearest = (la, lo, freeOnly, n = 5) => { const dd = dist(la, lo); return D.filter(l => l.lat && (!freeOnly || l.fee === '무료')).map(l => ({ l, d: dd(l) })).sort((a, b) => a.d - b.d).slice(0, n); };
   async function fetchIndex(url) {  // a stalled request must not leave the search dead: abort after 8 s and fall into the retry path
@@ -147,7 +149,7 @@
       const msg = $('geo-msg'); msg.hidden = false;
       // the nearest free lot may be far (강남역 → 과천 3.9 km): say so instead of presenting it as 'near'
       msg.textContent = (l.miss ? `'${l.miss}'는 없는 주소예요 · ` : '') + (freeOnly && near.length && near[0].d > 2 ? `${l.name} 2 km 안에는 무료 공영주차장이 없어요 · 가장 가까운 ${near.length}곳 (직선거리)` : `${l.name} 근처 ${freeOnly ? '무료 ' : ''}주차장 ${near.length}곳 (직선거리)`);
-      show(near.map(({ l: x, d }) => card(x, ` · ${l.name}에서 ${fmtKm(d)}`)).join(''));
+      show(near.map(({ l: x, d }) => card(x, ` · ${l.name}에서 ${fmtKm(d)}${walk(d)}`)).join(''));
       bringIntoView(msg);  // the '… N곳' line explains the list (esp. '2 km 안에는 없어요') — keep it on screen above the cards
       return;
     }
@@ -185,7 +187,7 @@
       busy(btn, false); if (ticket !== userIntent) return; msg.hidden = false;
       const near = nearest(pos.coords.latitude, pos.coords.longitude, freeOnly, 5);
       msg.textContent = freeOnly ? `가까운 무료 주차장 ${near.length}곳 (직선거리)` : `가까운 주차장 ${near.length}곳 (직선거리)`;
-      show(near.map(({ l, d }) => card(l, ` · ${fmtKm(d)}`)).join(''));
+      show(near.map(({ l, d }) => card(l, ` · ${fmtKm(d)}${walk(d)}`)).join(''));
       bringIntoView(msg);  // GPS list: the '가까운 … N곳' line first, cards right under it
     }, () => { busy(btn, false); if (ticket !== userIntent) return; msg.hidden = false; msg.textContent = '위치 권한이 없어요. 이름으로 찾아 주세요.'; }, { timeout: 8000 });
   };
