@@ -127,6 +127,12 @@ def emd_of(l):
 def weekend_cells(l):
     """Saturday / holiday cell text for the 읍면동 table, same reading as lot.html: Seoul rows carry explicit 유무료,
     elsewhere 비고 text → '무료', 운영요일 without the day → '미운영'(no fee collection), otherwise '미확인'."""
+    # ShareNuri's free flag is scoped to the institution's open window.  It is
+    # not evidence that Saturday or holidays are free, especially when the
+    # raw notice explicitly says those days are closed.  Legacy rows retain
+    # their existing weekend evidence.
+    if l.get("eshare") and (str(l.get("id", "")).startswith("eshare-") or l.get("open_days")):
+        return {"sat": "미확인", "hol": "미확인"}
     if l["fee"] == "무료":
         return {"sat": "무료", "hol": "무료"}
 
@@ -323,11 +329,24 @@ def main():
 
     written = set()
 
+    def safe_output_dir(path):
+        value = str(path)
+        if "\\" in value or "\x00" in value or "//" in value:
+            raise ValueError(f"unsafe output path: {path!r}")
+        relative = Path(value)
+        if relative.is_absolute() or ".." in relative.parts or "." in relative.parts:
+            raise ValueError(f"unsafe output path: {path!r}")
+        root = DIST.resolve()
+        out = (DIST / relative).resolve()
+        if out != root and root not in out.parents:
+            raise ValueError(f"output path escapes dist: {path!r}")
+        return out
+
     def write(path, template, **ctx):
         if path in written:
             raise ValueError(f"duplicate output path: {path}")  # a second write would silently replace another page
         written.add(path)
-        out = DIST / path
+        out = safe_output_dir(path)
         out.mkdir(parents=True, exist_ok=True)
         (out / "index.html").write_text(env.get_template(template).render(path=path, **ctx))
         urls.append(path)

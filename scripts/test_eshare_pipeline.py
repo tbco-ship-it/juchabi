@@ -9,6 +9,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from normalize_eshare import (  # noqa: E402
     analyze_rows,
+    _new_lot,
+    _source_digest,
+    apply_candidate,
+    assign_new_paths,
     address_key,
     address_system,
     classify_sido,
@@ -20,6 +24,14 @@ from normalize_eshare import (  # noqa: E402
     numeric_name_conflict,
     open_days_from_values,
     safe_eshare_url,
+    source_name_text,
+)
+from build import weekend_cells  # noqa: E402
+from fetch_eshare import (  # noqa: E402
+    _prepare_manifest,
+    _validate_budget_limit,
+    extract_items,
+    load_budget,
 )
 
 
@@ -105,6 +117,92 @@ class EsharePipelineTests(unittest.TestCase):
     def test_numeric_name_conflict_is_not_a_containment_match(self):
         self.assertTrue(numeric_name_conflict("신당동 1공영", "신당동 2공영"))
         self.assertFalse(numeric_name_conflict("신당동 1공영", "신당동 1공영 주차장"))
+        self.assertTrue(numeric_name_conflict("101동 제1 주차장", "101동 제12 주차장"))
+
+    def test_provider_address_tail_does_not_become_name_number_conflict(self):
+        row = source(
+            rsrcNm="내죽도공원 제1노상 주차장 통영시 광도면 죽림리 1574-42번지",
+            addr="경남 통영시 광도면 죽림리 1574-42",
+        )
+        self.assertEqual(source_name_text(row), "내죽도공원 제1노상 주차장")
+
+    def test_zero_won_is_not_paid_evidence_but_positive_amount_is(self):
+        for note in ("사용료: 0원", "사용료: 0 원", "사용료: 0.0원"):
+            self.assertEqual(fee_evidence(note, "Y")[:2], ("무료", False))
+        self.assertEqual(fee_evidence("최초 30분 0원, 이후 1,000원", "Y")[:2], ("혼합", True))
+
+    def test_paid_signal_after_display_limit_is_classified(self):
+        long_note = "무료 안내 " * 100 + "평일 09~18시 유료, 최초 30분 600원"
+        generated = _new_lot(
+            source(rsrcNo="LONG-1", rsrcIntr=long_note, atpn=""),
+            geography_status(source()),
+        )
+        self.assertEqual(generated["fee"], "혼합")
+        self.assertLessEqual(len(generated["eshare_note"]), 600)
+
+    def test_suspicious_url_forms_and_sigungu_are_rejected(self):
+        self.assertEqual(safe_eshare_url("https://outside.example\\@www.eshare.go.kr/detail/1"), "")
+        self.assertEqual(safe_eshare_url("https://user:pass@www.eshare.go.kr/detail/1"), "")
+        self.assertEqual(classify_sido("서울 ../../../outside구 1"), ("서울특별시", "seoul", "bad_sigungu"))
+
+    def test_share_nuri_free_does_not_infer_weekend_cells(self):
+        self.assertEqual(
+            weekend_cells({"fee": "무료", "id": "eshare-1", "eshare": {"free": "Y"}, "open_days": "평일 미개방 · 토 09:00~18:00 · 휴일 미개방"}),
+            {"sat": "미확인", "hol": "미확인"},
+        )
+
+    def test_assign_new_paths_reserves_final_slug(self):
+        existing = [lot(slug="foo"), lot(id="legacy-2", slug="foo-2")]
+        incoming = [
+            {"id": "eshare-2", "name": "foo", "sido_slug": "seoul", "sigungu": "알파구"},
+            {"id": "eshare-1", "name": "foo", "sido_slug": "seoul", "sigungu": "알파구"},
+        ]
+        assign_new_paths(existing, incoming)
+        self.assertEqual({row["slug"] for row in incoming}, {"foo-3", "foo-4"})
+
+    def test_error_envelope_and_missing_item_list_are_not_empty_success(self):
+        with self.assertRaisesRegex(RuntimeError, "error envelope"):
+            extract_items({"error": "INVALID REQUEST", "items": []})
+        with self.assertRaisesRegex(RuntimeError, "non-success"):
+            extract_items({"response": {"header": {"resultCode": "03"}, "body": {"items": []}}})
+        with self.assertRaisesRegex(RuntimeError, "item list"):
+            extract_items({"resultCode": "00", "resultMsg": "NORMAL_CODE"})
+
+    def test_fetch_manifest_binds_resume_parameters_and_budget_limit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out_dir = Path(directory)
+            first = _prepare_manifest(out_dir, 100)
+            with self.assertRaisesRegex(RuntimeError, "parameters changed"):
+                _prepare_manifest(out_dir, 50)
+            second = _prepare_manifest(out_dir, 50, fresh_snapshot=True)
+            self.assertNotEqual(first["request_fingerprint"], second["request_fingerprint"])
+            self.assertTrue(list((out_dir / "snapshots").iterdir()))
+            self.assertEqual(load_budget(out_dir, 1000)["calls"], 0)
+            with self.assertRaises(ValueError):
+                _validate_budget_limit(1001)
+
+    def test_apply_rejects_duplicate_destinations_before_dict_comprehension(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data_path = root / "lots.json"
+            raw_path = root / "raw.json"
+            candidate_path = root / "candidate.json"
+            data = {"source": {}, "lots": [lot(path="seoul/알파구/알파/")]}
+            data_path.write_text(json.dumps(data, ensure_ascii=False))
+            raw_path.write_text(json.dumps({"list": [{"rsrcNo": "1"}], "detail": [{"rsrcNo": "1"}]}))
+            candidate = {
+                "version": 2,
+                "source": {"input_sha256": __import__("hashlib").sha256(raw_path.read_bytes()).hexdigest()},
+                "lots_sha256": _source_digest(data["lots"]),
+                "matched": [
+                    {"lot": {"lot_index": 0, "lot_key": lot(path="seoul/알파구/알파/") and "legacy-1|알파|서울특별시 알파구 알파동 1-2"}, "eshare": {"rsrcNo": "1"}},
+                    {"lot": {"lot_index": 0, "lot_key": "legacy-1|알파|서울특별시 알파구 알파동 1-2"}, "eshare": {"rsrcNo": "2"}},
+                ],
+                "new_lots": [],
+            }
+            candidate_path.write_text(json.dumps(candidate, ensure_ascii=False))
+            with self.assertRaisesRegex(RuntimeError, "more than once"):
+                apply_candidate(candidate, data_path, raw_path, candidate_path, __import__("hashlib").sha256(candidate_path.read_bytes()).hexdigest())
 
     def test_source_url_is_https_and_host_bound(self):
         self.assertEqual(safe_eshare_url("https://www.eshare.go.kr/detail/1"), "https://www.eshare.go.kr/detail/1")

@@ -8,6 +8,7 @@ an already-reviewed candidate is passed with its explicit digest.
 from __future__ import annotations
 
 import argparse
+from decimal import Decimal, InvalidOperation
 import hashlib
 import html
 import json
@@ -70,7 +71,11 @@ SIDO_ALIASES = {
     "경남": "경상남도", "경상남도": "경상남도",
     "제주": "제주특별자치도", "제주도": "제주특별자치도", "제주특별자치도": "제주특별자치도",
 }
-SIGOONGU_PREFIX = re.compile(r"^(\S+?(?:시|군|구))$")
+# A sigungu token is later used in an output path.  Keep the grammar narrow so
+# an API address can never smuggle a path separator or dot-segment into a lot
+# URL.  The provider uses Korean administrative names, including a small
+# number of numeric/dot-separated names such as "세종시" and "광주 북구".
+SIGOONGU_PREFIX = re.compile(r"^[가-힣0-9·-]+(?:시|군|구)$")
 CENTERS = {
     "seoul": (37.5665, 126.9780), "gyeonggi": (37.4138, 127.5183),
     "incheon": (37.4563, 126.7052), "busan": (35.1796, 129.0756),
@@ -102,6 +107,40 @@ def normalize_name(value: Any) -> str:
     text = unicodedata.normalize("NFKC", str(value or "")).lower()
     text = NAME_NOISE.sub("", text)
     return re.sub(r"[^0-9a-z가-힣]", "", text)
+
+
+def source_name_text(row: dict[str, Any]) -> str:
+    """Remove the provider's appended address tail from a resource name.
+
+    A subset of list records puts ``name + address`` in ``rsrcNm`` while the
+    same API exposes the address separately.  Keeping that tail in the name
+    key makes its parcel numbers look like facility-number conflicts (for
+    example 제1 + 1574-42) and can reject an otherwise certain match.
+    """
+    text = str(row.get("rsrcNm") or "").strip()
+    if not text:
+        return str(row.get("lcInf") or "").strip()
+    best_start: int | None = None
+    for value in (row.get("addr"), row.get("lcInf")):
+        raw = str(value or "").strip()
+        tokens = raw.split()
+        starts = [index for index, token in enumerate(tokens) if re.search(r"(?:시|군|구)$", token)]
+        for start in starts:
+            # Match progressively shorter address prefixes so a provider's
+            # extra suffix (번지, 이동민원실 옆, etc.) cannot defeat the cut.
+            for end in range(len(tokens), start + 1, -1):
+                if end - start < 2:
+                    continue
+                pattern = r"\s*".join(re.escape(token) for token in tokens[start:end])
+                match = re.search(pattern, text)
+                if match and match.start() > 0 and (best_start is None or match.start() < best_start):
+                    best_start = match.start()
+    if best_start is not None:
+        return text[:best_start].rstrip(" ,-/")
+    daddr = str(row.get("daddr") or "").strip()
+    if daddr and "주차" in daddr and not daddr.startswith("("):
+        return daddr
+    return text
 
 
 def _address_text(value: Any) -> str:
@@ -165,10 +204,10 @@ def classify_sido(address: Any) -> tuple[str | None, str | None, str | None]:
     if sido == "세종특별자치시":
         return sido, slug, "세종시"
     second = tokens[1] if len(tokens) > 1 else ""
-    match = SIGOONGU_PREFIX.match(second)
+    match = SIGOONGU_PREFIX.fullmatch(second)
     if not match:
         return sido, slug, "bad_sigungu"
-    sigungu = match.group(1)
+    sigungu = match.group(0)
     if sido == "전남광주통합특별시" and raw_prefix in {"광주", "광주광역시"}:
         sigungu = f"광주 {sigungu}"
     return sido, slug, sigungu
@@ -179,7 +218,8 @@ def geography_status(row: dict[str, Any]) -> dict[str, Any]:
     lat, lng = parse_coordinate(row.get("lat")), parse_coordinate(row.get("lot"))
     if not sido:
         return {"ok": False, "reason": "unknown_sido_prefix", "sido": None, "sido_slug": None, "sigungu": None}
-    if not sigungu or not isinstance(sigungu, str):
+    if (not sigungu or not isinstance(sigungu, str) or sigungu == "bad_sigungu"
+            or not SIGOONGU_PREFIX.fullmatch(sigungu.replace(" ", "", 1) if sido == "전남광주통합특별시" else sigungu)):
         return {"ok": False, "reason": "bad_sigungu", "sido": sido, "sido_slug": sido_slug, "sigungu": sigungu}
     if lat is None or lng is None or not (33 <= lat <= 39 and 124 <= lng <= 132):
         return {"ok": False, "reason": "coordinate_outside_korea_bbox", "sido": sido, "sido_slug": sido_slug, "sigungu": sigungu, "lat": lat, "lng": lng}
@@ -215,7 +255,7 @@ class _TextExtractor(HTMLParser):
             self.parts.append(data)
 
 
-def html_to_text(*values: Any, limit: int = 600) -> str:
+def html_to_text(*values: Any, limit: int | None = 600) -> str:
     parser = _TextExtractor()
     for value in values:
         if value:
@@ -225,13 +265,25 @@ def html_to_text(*values: Any, limit: int = 600) -> str:
     raw = html.unescape("".join(parser.parts)).replace("\r", "")
     lines = [re.sub(r"[ \t\f\v]+", " ", line).strip() for line in raw.split("\n")]
     text = "\n".join(line for line in lines if line)
-    return text[:limit].rstrip()
+    return text if limit is None else text[:limit].rstrip()
 
 
 def safe_eshare_url(value: Any) -> str:
     url = str(value or "").strip()
-    parsed = urlparse(url)
-    if parsed.scheme != "https" or parsed.hostname not in ESHARE_HOSTS or not parsed.path.startswith("/"):
+    # Backslashes are interpreted as separators by some browsers even though
+    # urlparse treats them as ordinary netloc characters.  Credentials and
+    # explicit ports likewise make the displayed host ambiguous.
+    if not url or "\\" in url or any(ord(char) < 0x20 for char in url):
+        return ""
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        return ""
+    if (parsed.scheme.lower() != "https" or hostname not in ESHARE_HOSTS or port is not None
+            or parsed.username is not None or parsed.password is not None
+            or not parsed.path.startswith("/")):
         return ""
     return url
 
@@ -276,15 +328,26 @@ def fee_evidence(note: str, free_code: str) -> tuple[str, bool, dict[str, str]]:
     fee_lines: list[str] = []
     fee_label = re.compile(r"(?:사용|이용|주차|충전)?요금(?:정보)?|(?:사용|이용)료(?!\s*(?:납부|환불|안내|조건|취소))")
     free_value = re.compile(r"^(?:무료|무료이용|무료운영|없음|무|해당없음|해당 사항 없음|해당사항 없음|해당사항없음|없습니다?)(?:\s*[.。,/)]|\s*$)")
+    amount_pattern = re.compile(r"(?<!\d)(\d[\d,]*(?:\.\d+)?)\s*원")
     for line in lines:
+        amounts: list[Decimal] = []
+        for amount in amount_pattern.findall(line):
+            try:
+                amounts.append(Decimal(amount.replace(",", "")))
+            except InvalidOperation:
+                continue
+        has_positive_amount = any(amount > 0 for amount in amounts)
         if re.search(r"유료", line):
             fee_lines.append(line)
-        if re.search(r"(?<!\d)\d[\d,]*(?:\.\d+)?\s*원", line):
+        # 0원 is a free amount, not evidence that a free-window resource is
+        # paid.  A line containing both 0원 and a positive amount is paid.
+        if has_positive_amount:
             fee_lines.append(line)
         for match in fee_label.finditer(line):
             value = line[match.end():].lstrip(" \t:：>)-=")
             value = value.split("<", 1)[0].strip(" \t:：>)-=/.,。")
-            if value and "무료" not in value and not free_value.match(value):
+            if (value and "무료" not in value and not free_value.match(value)
+                    and not (amounts and not has_positive_amount)):
                 fee_lines.append(line)
     if free_code == "N":
         return "유료", True, {"공유누리": (fee_lines[0] if fee_lines else "freeYn=N")}
@@ -295,12 +358,15 @@ def fee_evidence(note: str, free_code: str) -> tuple[str, bool, dict[str, str]]:
 
 
 def numeric_tokens(value: Any) -> set[str]:
-    return set(re.findall(r"\d+", str(value or "")))
+    return {str(int(token)) for token in re.findall(r"\d+", str(value or ""))}
 
 
 def numeric_name_conflict(left: Any, right: Any) -> bool:
     left_tokens, right_tokens = numeric_tokens(left), numeric_tokens(right)
-    return bool(left_tokens and right_tokens and left_tokens.isdisjoint(right_tokens))
+    # Containment is unsafe when both names carry numbers but those numbers
+    # are not the same.  Disjointness alone missed 101동 제1 vs 101동 제12
+    # because both shared the 101 token.
+    return bool(left_tokens and right_tokens and left_tokens != right_tokens)
 
 
 def load_raw(path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -376,9 +442,13 @@ def _new_lot(row: dict[str, Any], geo: dict[str, Any]) -> dict[str, Any]:
     if type_name == "주차장":
         type_name = "노외"
     name = (row.get("rsrcNm") or row.get("lcInf") or f"공유누리 {row.get('rsrcNo')}").strip()
-    note = html_to_text(row.get("rsrcIntr"), row.get("atpn"))
+    # Keep the full cleaned text for classification.  Only the stored display
+    # note is truncated; otherwise a paid clause after byte/character 600 can
+    # incorrectly turn a mixed resource into a free one.
+    full_note = html_to_text(row.get("rsrcIntr"), row.get("atpn"), limit=None)
+    note = full_note[:600].rstrip()
     free_code = str(row.get("freeYn") or "").upper()
-    fee, fee_review, fee_raw = fee_evidence(note, free_code)
+    fee, fee_review, fee_raw = fee_evidence(full_note, free_code)
     open_days = open_days_from_values(row.get("rsrcIntr"), row.get("atpn"))
     return {
         "id": f"eshare-{row['rsrcNo']}", "name": name, "kind": "개방", "type": type_name,
@@ -399,6 +469,11 @@ def _new_lot(row: dict[str, Any], geo: dict[str, Any]) -> dict[str, Any]:
 
 def analyze_rows(rows: list[dict[str, Any]], lots: list[dict[str, Any]]) -> dict[str, Any]:
     names, addresses, lot_name_keys = build_indexes(lots)
+    existing_sources: dict[str, list[int]] = defaultdict(list)
+    for index, lot in enumerate(lots):
+        source = lot.get("eshare")
+        if isinstance(source, dict) and source.get("rsrcNo"):
+            existing_sources[str(source["rsrcNo"])].append(index)
     coord_rows: list[tuple[int, float, float]] = []
     for i, lot in enumerate(lots):
         lat, lng = parse_coordinate(lot.get("lat")), parse_coordinate(lot.get("lng"))
@@ -408,8 +483,22 @@ def analyze_rows(rows: list[dict[str, Any]], lots: list[dict[str, Any]]) -> dict
     new_lots: list[dict[str, Any]] = []
     reviews: list[dict[str, Any]] = []
     used_destinations: dict[int, str] = {}
+    seen_source_ids: set[str] = set()
     for row in rows:
         meta = _resource_meta(row)
+        source_id = str(row.get("rsrcNo") or "")
+        if not source_id:
+            reviews.append({"source": meta, "reason": "missing_rsrc_no", "candidates": {}})
+            continue
+        if source_id in seen_source_ids:
+            reviews.append({"source": meta, "reason": "duplicate_input_rsrc_no", "candidates": {}})
+            continue
+        seen_source_ids.add(source_id)
+        if source_id in existing_sources:
+            reviews.append({"source": meta, "reason": "source_already_present", "candidates": {
+                "existing": _candidate_refs(existing_sources[source_id], lots),
+            }})
+            continue
         free_code = str(row.get("freeYn") or "").upper()
         if free_code not in {"Y", "N"}:
             reviews.append({"source": meta, "reason": "unknown_free_yn", "candidates": {}})
@@ -421,12 +510,13 @@ def analyze_rows(rows: list[dict[str, Any]], lots: list[dict[str, Any]]) -> dict
         if not geo["ok"]:
             reviews.append({"source": meta, "reason": geo["reason"], "geography": geo, "candidates": {}})
             continue
+        source_name = source_name_text(row)
         source_name_key = normalize_name(row.get("rsrcNm"))
         name_hits = names.get(source_name_key, set()) if source_name_key else set()
         name_weak_hits = {i for i, lot_name_key in enumerate(lot_name_keys)
                           if i not in name_hits and len(source_name_key) >= 2 and len(lot_name_key) >= 2
                           and (source_name_key in lot_name_key or lot_name_key in source_name_key)
-                          and not numeric_name_conflict(row.get("rsrcNm"), lots[i].get("name"))}
+                          and not numeric_name_conflict(source_name, lots[i].get("name"))}
         source_lat, source_lng = geo["lat"], geo["lng"]
         coord_hits = {i for i, lat, lng in coord_rows if distance_m(source_lat, source_lng, lat, lng) <= 50}
         source_address = address_key(row.get("addr"))
@@ -463,7 +553,7 @@ def analyze_rows(rows: list[dict[str, Any]], lots: list[dict[str, Any]]) -> dict
                 used_destinations[destination] = str(row.get("rsrcNo") or "")
                 how = "name+coord" if destination in intersections["name_coord"] else ("name+address" if destination in intersections["name_address"] else "name-contains+coord")
                 matched.append({"source": meta, "lot": lot_ref(destination, lots[destination]), "match": how, "eshare": _eshare_value(row),
-                                "eshare_note": html_to_text(row.get("rsrcIntr"), row.get("atpn")),
+                                "eshare_note": html_to_text(row.get("rsrcIntr"), row.get("atpn"), limit=600),
                                 "free_open": "공유누리 개방 무료 · 개방 시간은 기관 안내 참조"
                                 if free_code == "Y" and lots[destination].get("fee") == "무료" else "",
                                 "open_days": open_days_from_values(row.get("rsrcIntr"), row.get("atpn"))})
@@ -481,16 +571,35 @@ def analyze_rows(rows: list[dict[str, Any]], lots: list[dict[str, Any]]) -> dict
 
 
 def assign_new_paths(lots: list[dict[str, Any]], new_lots: list[dict[str, Any]]) -> None:
-    used: dict[tuple[str, str], Counter[str]] = defaultdict(Counter)
+    # Reserve the final slug, not only a base-name counter.  Existing data may
+    # already contain a literal ``foo-2`` slug, so incrementing the base count
+    # alone can still collide with a real slug.
+    used: dict[tuple[str, str], set[str]] = defaultdict(set)
     for lot in lots:
-        used[(lot.get("sido_slug", ""), lot.get("sigungu", ""))][lot.get("slug") or slugify_ko(lot.get("name", ""))] += 1
+        group = (lot.get("sido_slug", ""), lot.get("sigungu", ""))
+        used[group].add(lot.get("slug") or slugify_ko(lot.get("name", "")))
     for lot in sorted(new_lots, key=lambda x: str(x.get("id", ""))):
         group = (lot["sido_slug"], lot["sigungu"])
-        counts = used[group]
+        slugs = used[group]
         base = slugify_ko(lot["name"])
-        counts[base] += 1
-        lot["slug"] = base if counts[base] == 1 else f"{base}-{counts[base]}"
+        slug = base
+        suffix = 2
+        while slug in slugs:
+            slug = f"{base}-{suffix}"
+            suffix += 1
+        slugs.add(slug)
+        lot["slug"] = slug
         lot["path"] = f"{lot['sido_slug']}/{lot['sigungu']}/{lot['slug']}/"
+
+
+def _validate_relative_output_path(value: Any) -> str:
+    path = str(value or "")
+    parts = Path(path).parts
+    if (not path or not path.endswith("/") or path.startswith("/") or "\\" in path
+            or "\x00" in path or any(part in {"", ".", ".."} for part in parts)
+            or Path(path).is_absolute()):
+        raise RuntimeError(f"unsafe relative output path: {value!r}")
+    return path
 
 
 def _source_digest(lots: list[dict[str, Any]]) -> str:
@@ -548,7 +657,69 @@ def apply_candidate(candidate: dict[str, Any], data_path: Path, raw_path: Path, 
         data = json.loads(data_path.read_text())
         if _source_digest(data["lots"]) != candidate["lots_sha256"]:
             raise RuntimeError("data/lots.json changed after candidate generation; refusing to apply")
-        by_index = {item["lot"]["lot_index"]: item for item in candidate["matched"]}
+        matched_items = candidate.get("matched")
+        new_lots = candidate.get("new_lots")
+        if not isinstance(matched_items, list) or not isinstance(new_lots, list):
+            raise RuntimeError("candidate matched/new_lots arrays are required")
+
+        destination_indices: list[int] = []
+        incoming_source_ids: list[str] = []
+        for item in matched_items:
+            raw_index = (item.get("lot") or {}).get("lot_index") if isinstance(item, dict) else None
+            if isinstance(raw_index, bool) or not isinstance(raw_index, int):
+                raise RuntimeError("candidate contains a non-integer matched lot index")
+            try:
+                index = raw_index
+            except (KeyError, TypeError, ValueError) as exc:
+                raise RuntimeError("candidate contains an invalid matched lot index") from exc
+            if index < 0 or index >= len(data["lots"]):
+                raise RuntimeError(f"matched lot index out of range: {index}")
+            destination_indices.append(index)
+            source_id = str((item.get("eshare") or {}).get("rsrcNo") or "")
+            if not source_id:
+                raise RuntimeError("matched candidate is missing eshare.rsrcNo")
+            incoming_source_ids.append(source_id)
+        for lot in new_lots:
+            source_id = str((lot.get("eshare") or {}).get("rsrcNo") or "")
+            if not source_id:
+                raise RuntimeError("new candidate is missing eshare.rsrcNo")
+            incoming_source_ids.append(source_id)
+            _validate_relative_output_path(lot.get("path"))
+
+        if len(destination_indices) != len(set(destination_indices)):
+            raise RuntimeError("candidate assigns one destination lot more than once")
+        if len(incoming_source_ids) != len(set(incoming_source_ids)):
+            raise RuntimeError("candidate contains duplicate incoming rsrcNo")
+
+        existing_source_ids: dict[str, list[int]] = defaultdict(list)
+        existing_ids: set[str] = set()
+        existing_paths: set[str] = set()
+        for index, lot in enumerate(data["lots"]):
+            existing_ids.add(str(lot.get("id") or ""))
+            if lot.get("path"):
+                existing_paths.add(str(lot["path"]))
+            source = lot.get("eshare")
+            if isinstance(source, dict) and source.get("rsrcNo"):
+                existing_source_ids[str(source["rsrcNo"])].append(index)
+        duplicate_existing_sources = sorted(source for source, indexes in existing_source_ids.items() if len(indexes) > 1)
+        if duplicate_existing_sources:
+            raise RuntimeError(f"existing lots contain duplicate eshare rsrcNo: {duplicate_existing_sources[:3]}")
+        already_present = sorted(set(incoming_source_ids) & set(existing_source_ids))
+        if already_present:
+            raise RuntimeError(f"candidate rsrcNo already present: {already_present[:3]}")
+
+        new_ids = [str(lot.get("id") or "") for lot in new_lots]
+        new_paths = [str(lot.get("path") or "") for lot in new_lots]
+        if any(not value for value in new_ids) or len(new_ids) != len(set(new_ids)):
+            raise RuntimeError("candidate contains missing or duplicate new lot ids")
+        if len(new_paths) != len(set(new_paths)):
+            raise RuntimeError("candidate contains duplicate new lot paths")
+        if set(new_ids) & existing_ids:
+            raise RuntimeError("candidate new lot id already exists")
+        if set(new_paths) & existing_paths:
+            raise RuntimeError("candidate new lot path already exists")
+
+        by_index = {item["lot"]["lot_index"]: item for item in matched_items}
         for index, item in by_index.items():
             if not (0 <= index < len(data["lots"])):
                 raise RuntimeError(f"matched lot index out of range: {index}")
@@ -566,7 +737,7 @@ def apply_candidate(candidate: dict[str, Any], data_path: Path, raw_path: Path, 
             if item.get("free_open") and not lot.get("free_open"):
                 lot["free_open"] = item["free_open"]
             lot["open_days"] = item.get("open_days", "")
-        data["lots"].extend(candidate["new_lots"])
+        data["lots"].extend(new_lots)
         fd, temp_name = tempfile.mkstemp(prefix="lots.json.", suffix=".tmp", dir=str(data_path.parent))
         try:
             with os.fdopen(fd, "w") as temp:
@@ -603,7 +774,7 @@ def write_report(candidate: dict[str, Any], rows: list[dict[str, Any]], existing
     for new_lot in sample_lots:
         row = row_by_id[str(new_lot["id"]).removeprefix("eshare-")]
         distance, nearest = _nearest_existing_lot(new_lot, existing_lots)
-        expected_fee, _, _ = fee_evidence(html_to_text(row.get("rsrcIntr"), row.get("atpn")), str(row.get("freeYn") or "").upper())
+        expected_fee, _, _ = fee_evidence(html_to_text(row.get("rsrcIntr"), row.get("atpn"), limit=None), str(row.get("freeYn") or "").upper())
         sample_checks.append({"lot": new_lot, "row": row, "distance": distance, "nearest": nearest,
                               "sigungu_ok": bool(nearest and nearest.get("sigungu") == new_lot.get("sigungu")),
                               "fee_expected": expected_fee, "fee_ok": expected_fee == new_lot.get("fee")})
@@ -623,7 +794,7 @@ def write_report(candidate: dict[str, Any], rows: list[dict[str, Any]], existing
         nearest_sigungu = nearest.get("sigungu", "-") if nearest else "-"
         distance = f"{check['distance']:.1f}m" if check["distance"] is not None else "-"
         lines.append(f"| {row['rsrcNo']} | {lot['name']} | {lot['addr']} | {lot['lat']}, {lot['lng']} | {lot['org']} | {str(row.get('freeYn') or '').upper()} | {lot['fee']} | {'Y' if check['fee_ok'] else 'N'} ({check['fee_expected']}) | {nearest_sigungu} | {distance} | {'Y' if check['sigungu_ok'] else 'N'} |")
-    lines += ["", "## 제외·보류 기준", "", "- 시도 접두어를 명시적으로 매핑하지 못한 주소는 `unknown_sido_prefix`로 보류했습니다.", "- 한국 좌표 bbox 또는 시도 중심 200km 검증을 통과하지 못한 좌표는 신규로 만들지 않았습니다.", "- 이름·좌표·주소 후보가 있으나 두 근거가 같은 기존 lot을 유일하게 가리키지 않으면 보류했습니다.", "- 기존 lot의 `eshare`가 이미 있거나 여러 공유누리 자원이 한 lot을 차지하려는 경우 덮어쓰지 않고 보류했습니다.", "- 원문 HTML은 태그와 이미지를 제거해 `eshare_note`에 최대 600자로 보존했고, 요금·시간 숫자는 구조화하지 않았습니다.", "- `freeYn=Y`라도 원문에 유료·요금 숫자 신호가 있으면 `혼합`으로 분류해 무료 전용 집계에서 제외했습니다."]
+    lines += ["", "## 제외·보류 기준", "", "- 시도 접두어를 명시적으로 매핑하지 못한 주소는 `unknown_sido_prefix`로 보류했습니다.", "- 한국 좌표 bbox 또는 시도 중심 200km 검증을 통과하지 못한 좌표는 신규로 만들지 않았습니다.", "- 이름·좌표·주소 후보가 있으나 두 근거가 같은 기존 lot을 유일하게 가리키지 않으면 보류했습니다.", "- 기존 lot의 `eshare`가 이미 있거나 여러 공유누리 자원이 한 lot을 차지하려는 경우 덮어쓰지 않고 보류했습니다.", "- 원문 HTML은 태그와 이미지를 제거해 요금 판정에는 전체 텍스트를 사용하고, `eshare_note`에는 최대 600자로 보존했습니다.", "- `freeYn=Y`라도 원문에 유료·양수 금액 신호가 있으면 `혼합`으로 분류해 무료 전용 집계에서 제외했습니다."]
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n")
 

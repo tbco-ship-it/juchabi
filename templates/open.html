@@ -14,8 +14,8 @@
 <div class="open-grid">
 {% for s in open_sidos %}<section class="sec open-region" data-open-region>
   <div class="sec-h"><h2>{{ s.short }} <span class="muted small">{{ s.n }}곳 · 무료 {{ s.free }}</span></h2><a href="{{ base }}{{ s.slug }}/">지역 요금</a></div>
-  {% for g in s.groups %}<h3 class="open-group-title">{{ g.name }} <span class="muted small">{{ g.lots|length }}곳</span></h3>
-  <ul class="list open-list">{% for l in g.lots %}<li data-open-free="{{ '1' if l.fee == '무료' and l.eshare.free == 'Y' else '0' }}"><a href="{{ base }}{{ l.path }}"><span class="nm">{{ l.name }} <small>{{ l.org }}</small></span><span class="meta">{% if l.fee == '무료' and l.eshare.free == 'Y' %}무료{% elif l.eshare.free == 'Y' %}{{ l.fee }} · 무료 개방 시간대{% else %}{{ l.fee }}{% endif %} · 공유누리</span></a></li>{% endfor %}</ul>{% endfor %}
+  {% for g in s.groups %}<div class="open-group" data-open-group><h3 class="open-group-title">{{ g.name }} <span class="muted small">{{ g.lots|length }}곳</span></h3>
+  <ul class="list open-list">{% for l in g.lots %}<li data-open-free="{{ '1' if l.fee == '무료' and l.eshare.free == 'Y' else '0' }}"><a href="{{ base }}{{ l.path }}"><span class="nm">{{ l.name }} <small>{{ l.org }}</small></span><span class="meta">{% if l.fee == '무료' and l.eshare.free == 'Y' %}무료{% elif l.eshare.free == 'Y' %}{{ l.fee }} · 무료 개방 시간대{% else %}{{ l.fee }}{% endif %} · 공유누리</span></a></li>{% endfor %}</ul></div>{% endfor %}
 </section>{% endfor %}
 </div>
 {% if not open_lots %}<p class="muted">현재 공유누리 개방 주차장 자료가 없습니다.</p>{% endif %}
