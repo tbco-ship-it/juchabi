@@ -24,6 +24,7 @@ SIDO_SHORT = {"서울특별시": "서울", "부산광역시": "부산", "대구�
 CAT_LABEL = {"light": "경차", "green": "저공해·전기차", "disabled": "장애인", "multi": "다자녀", "veteran": "국가유공자", "senior": "고령자", "pregnant": "임산부", "rotation": "요일제·부제"}
 CAT_ORDER = ["light", "green", "disabled", "multi", "veteran", "senior", "pregnant", "rotation"]
 HOURS = [1, 2, 3, 5, 8]
+NEXT_HOLIDAY = {"label": "2026 추석", "short": "추석(9/25)", "date": "2026-09-27"}  # the holiday the 행안부 file is awaited for; after its last day the page says so instead
 
 
 def won(n):
@@ -36,6 +37,8 @@ def cost(l, minutes):
     """Fee for `minutes` under the reported 기본시간/기본요금/추가단위 rule; None when the lot has no usable rule."""
     if l["fee"] == "무료":
         return 0
+    if not (0 <= minutes <= 1440):
+        return None  # a second day resets caps at a time each lot defines differently — not modelled
     if l.get("hourly_review", l.get("fee_review", False)):
         return None  # 복합·소수 시간요금은 원문 보존, 계산 보류 (일·월권만 복합인 곳은 시간요금을 계산한다)
     b_min, b_won, a_min, a_won = l["basic_min"], l["basic_won"], l["add_min"], l["add_won"]
@@ -44,10 +47,14 @@ def cost(l, minutes):
     if b_won is None or (b_min is None and a_min is None):
         return None
     b_min = b_min or 0
+    tier = l.get("tier")  # 비고 '2시간 초과 시 10분마다 300원': the unit price changes after `after_min`
     if minutes <= b_min:
         total = b_won
     elif a_min and a_won is not None:
-        total = b_won + math.ceil((minutes - b_min) / a_min) * a_won
+        if tier and minutes > tier["after_min"] >= b_min:
+            total = b_won + math.ceil((tier["after_min"] - b_min) / a_min) * a_won + math.ceil((minutes - tier["after_min"]) / tier["unit_min"]) * tier["unit_won"]
+        else:
+            total = b_won + math.ceil((minutes - b_min) / a_min) * a_won
     elif a_min is None and a_won is None and b_min:
         return None  # 기본요금만 있고 초과 규칙이 없다
     else:
@@ -56,6 +63,8 @@ def cost(l, minutes):
         total = min(total, l["day_won"])
     if l.get("day_max_won") and l["id"].startswith("seoul-"):
         total = min(total, l["day_max_won"])  # 서울시 API의 1일 최대요금 — 기본·추가요금도 같은 API에서 온 lot에만 상한 적용 (출처가 다른 요금표를 섞지 않는다)
+    if l.get("note_day_max_won"):
+        total = min(total, l["note_day_max_won"])  # the same 지자체 row's 비고 '1일 최대 6000원' — same source as the unit prices
     return total
 
 
@@ -126,7 +135,7 @@ def weekend_cells(l):
             return "유료"
         if unstaffed:
             return "미운영"
-        return "미확인" if not l.get("seoul_code") else "유료"
+        return "미확인"  # a Seoul lot whose flag is unknown (or conflicts with the 비고) is not thereby 유료
     return {"sat": cell(l.get("sat_free"), l.get("sat_unstaffed")), "hol": cell(l.get("hol_free"), l.get("hol_unstaffed"))}
 
 
@@ -234,8 +243,8 @@ def main():
     sido_idx = {s["slug"]: i for i, s in enumerate(sidos.values())}
     r5 = lambda x: round(x, 5) if x is not None else None
     items = [[l["name"], sido_idx[l["sido_slug"]], l["sigungu"], l["locality"], 0 if l["slug"] == re.sub(r"\s+", "", l["name"]) else l["slug"], r5(l["lat"]), r5(l["lng"]), {"무료": 0, "유료": 1}.get(l["fee"], 2),
-              l["basic_min"], l["basic_won"], l["add_min"], l["add_won"], l["day_won"], l["month_won"], 1 if l["free_open"] else 0, l["spaces"],
-              [l["costs"][hh] for hh in HOURS]] for l in lots]  # index 16: precomputed 1/2/3/5/8h — JS never recomputes
+              l["basic_min"], l["basic_won"], l["add_min"], l["add_won"], l["day_won"], None if l.get("month_scope") == "staff" else l["month_won"], 1 if l["free_open"] else 0, l["spaces"],
+              [l["costs"][hh] for hh in HOURS], l.get("restricted") or 0] for l in lots]  # 16: precomputed 1/2/3/5/8h — JS never recomputes; 17: '외부차량 출입금지' etc. — free of charge but not for passers-by
     stations = json.loads((ROOT / "data/stations.json").read_text())["stations"]  # [name, lat, lng] — "거제역" searches resolve to the station, then the nearest lots
     payload = json.dumps({"sidos": sido_list, "items": items, "stations": stations}, ensure_ascii=False, separators=(",", ":"))
     (DIST / "static/index.json").write_text(payload)
@@ -244,8 +253,10 @@ def main():
     # 명절 무료개방 (행안부 15099790, data/holiday_free.json via scripts/normalize_holiday.py): 시도 → 시군구 → lots, 면수 많은 순
     hraw = json.loads((ROOT / "data/holiday_free.json").read_text())
     hsrc = hraw["source"]
+    KIND_LABEL = {"지방자치단체": "지자체", "중앙행정기관": "중앙행정"}  # the file's org_kind values vs the labels the templates read
     hf = {"label": f"{hsrc['year']} {hsrc['holiday']}", "published": hsrc["published"], "url": hsrc["url"], "dates": hsrc["dates"], "n": len(hraw["lots"]),
-          "past": today.isoformat() > hsrc["dates"][-1], "kinds": Counter(l["org_kind"] for l in hraw["lots"]), "sidos": [], "always": []}
+          "past": today.isoformat() > hsrc["dates"][-1], "kinds": Counter(KIND_LABEL.get(l["org_kind"], l["org_kind"]) for l in hraw["lots"]), "sidos": [], "always": [],
+          "next": NEXT_HOLIDAY if today.isoformat() <= NEXT_HOLIDAY["date"] else None, "caution": 0}
     md = lambda d: f"{int(d[5:7])}/{int(d[8:10])}"
     hf["range"] = f"{md(hsrc['dates'][0])}~{md(hsrc['dates'][-1])}"
     for l in hraw["lots"]:
@@ -260,6 +271,9 @@ def main():
         # '평소에도 개방' 후보: 시간대 단어 + 개방/무료/이용 이 있고, 부정어·조건부(안함/않/제외/충전 전용 등)가 없을 때만.
         # 오성고 "상시개방안함전기차충전개방09:0016:00 설 추석 명절 개방" 같은 문구는 상시 일반 주차 개방이 아니다.
         note = l["note"]
+        if re.search(r"미개방|개방\s*(?:안\s*함|불가|하지\s*않)|주차\s*불가|이용\s*불가", note):
+            l["caution"] = True  # '공사로 미개방', '정문만 개방', '일요일은 미개방': the dates column alone would mislead — read the note first
+            hf["caution"] += 1
         if (re.search(r"(평일|주말|공휴일|야간|상시|연중|매일|토요일|일요일)", note) and re.search(r"(개방|무료|이용)", note)
                 and not re.search(r"미개방|명절\s*(에만|기간에만|한정|만)|불가|안\s*함|않|없음|제외|금지|전기차|충전|장애인\s*전용|관계자|직원|입주|계약|정기권", note)):
             hf["always"].append(l)
@@ -283,7 +297,12 @@ def main():
 
     urls = []
 
+    written = set()
+
     def write(path, template, **ctx):
+        if path in written:
+            raise ValueError(f"duplicate output path: {path}")  # a second write would silently replace another page
+        written.add(path)
         out = DIST / path
         out.mkdir(parents=True, exist_ok=True)
         (out / "index.html").write_text(env.get_template(template).render(path=path, **ctx))
@@ -294,8 +313,9 @@ def main():
         write(f"{page}/", f"{page}.html")
     write("guide/discount/", "guide_discount.html")
     write("guide/fee/", "guide_fee.html")
-    cheap_month = sorted([l for l in lots if l["month_won"] and l["month_won"] >= 10000], key=lambda l: l["month_won"])
-    write("guide/monthly/", "guide_monthly.html", cheap=cheap_month[:60], by_sido={s["slug"]: sorted([l for l in s["lots"] if l["month_won"] and l["month_won"] >= 10000], key=lambda l: l["month_won"])[:10] for s in sidos.values()})
+    general_month = lambda l: l["month_won"] and l["month_won"] >= 10000 and l.get("month_scope") != "staff"  # '월정기권 시청직원에 한함' is not a public price
+    cheap_month = sorted([l for l in lots if general_month(l)], key=lambda l: l["month_won"])
+    write("guide/monthly/", "guide_monthly.html", cheap=cheap_month[:60], by_sido={s["slug"]: sorted([l for l in s["lots"] if general_month(l)], key=lambda l: l["month_won"])[:10] for s in sidos.values()})
     write("guide/free-open/", "guide_free.html", free_open=[l for l in lots if l["free_open"]])
     write("holiday-free/", "holiday.html")
     for hs in hf["sidos"]:

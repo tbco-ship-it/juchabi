@@ -66,13 +66,59 @@ def parse_discounts(note):
         if ambiguous or pct is None or not 0 < pct <= 100:
             pct = None
         for key, _label, rx in CATS:
-            if not re.search(rx, seg):
+            m = re.search(rx, seg)
+            if not m:
                 continue
             old = found.get(key)
             text = seg if old is None else old["text"] + " / " + seg
             value = pct if old is None or old["pct"] == pct else None
+            if value is not None and _local_only(seg, m.end()):
+                value = None  # '임산부(탑승,인천시)', '임산부-경주시민': the rate exists but only for residents — not a button anyone can press
             found[key] = {"pct": value, "text": text, "conditional": value is None}
     return found
+
+
+LOCAL_ONLY = re.compile(r"시민|군민|구민|주민|거주|관내|지역민|[가-힣]{1,4}(?:특별시|광역시|시|군|구)(?=[),\s]|$)")
+
+
+def _local_only(seg, end):
+    """The words right after a category token ('임산부(탑승,인천시)', '다자녀-경주시민', '임산부 - 관내 거주자') name a residency
+    condition. Only that tail is read — '경차 50%' next to '인천시' elsewhere in the sentence is not affected."""
+    tail = seg[end:]
+    if tail.startswith("("):
+        tail = tail[:tail.find(")") + 1] if ")" in tail else tail
+    else:
+        tail = re.split(r"[,)/+;]", tail, maxsplit=1)[0]
+    return bool(LOCAL_ONLY.search(tail[:40]))
+
+
+TIERED_FEE = re.compile(r"(\d+)\s*시간\s*(?:초과|이후|이상)\s*(?:시|부터)?\s*(\d+)\s*분\s*(?:마다|당)\s*(\d[\d,]*)\s*원")
+TIER_WORDS = re.compile(r"\d+\s*시간\s*(?:초과|이후|이상)[^+/;]*\d+\s*분\s*(?:마다|당)\s*\d[\d,]*\s*원")
+NOTE_DAY_MAX = re.compile(r"1일\s*최대\s*(?:요금)?\s*:?\s*(\d[\d,]*)\s*원")
+RESTRICTED = re.compile(r"외부\s*차량\s*(?:출입|주차)\s*금지|출입\s*금지|입주민\s*전용|입주자\s*전용|직원\s*전용|관계자\s*외\s*(?:출입|주차)\s*금지|계약\s*차량\s*전용")
+MONTH_STAFF = re.compile(r"월\s*정기권?[^+/;,]*(?:직원|공무원|교직원)\s*(?:에\s*)?(?:한함|한정|전용|만)")
+
+
+def note_rules(l, note):
+    """Rules the 비고 states that the numeric columns cannot express. Each one is either applied as a structured value or blocks the
+    calculation — never ignored (명동: '2시간 초과 시 10분마다 300원' made 3시간 3,000원 instead of 3,600원)."""
+    tiers = TIERED_FEE.findall(note)
+    if len(tiers) == 1 and l["fee"] != "무료":
+        after_h, unit, won = tiers[0]
+        l["tier"] = {"after_min": int(after_h) * 60, "unit_min": int(unit), "unit_won": int(won.replace(",", ""))}
+    elif tiers or TIER_WORDS.search(note):
+        l["hourly_review"] = l["fee_review"] = True  # two tiers or a shape the regex cannot read: hold the number, show the text
+        l["fee_raw"] = {**l.get("fee_raw", {}), "비고": note[:120]}
+    caps = {int(c.replace(",", "")) for c in NOTE_DAY_MAX.findall(note)}
+    if len(caps) == 1:
+        l["note_day_max_won"] = caps.pop()
+    elif caps:
+        l["hourly_review"] = l["fee_review"] = True
+    m = RESTRICTED.search(note)
+    if m:
+        l["restricted"] = m.group(0)  # '외부차량 출입금지', '입주민 전용': free of charge but not open to a passer-by
+    if l.get("month_won") and MONTH_STAFF.search(note):
+        l["month_scope"] = "staff"
 
 
 def free_open(note):
@@ -80,7 +126,12 @@ def free_open(note):
     if not note:
         return ""
     m = re.search(r"[^+/;,]*(?:무료\s*개방|무료\s*운영|무료개방|주말\s*무료|공휴일\s*무료|야간\s*무료|무료\s*\(?(?:토|일|공휴일|야간))[^+/;,]*", note)
+    if m and NEGATED_FREE.search(m.group(0)):
+        return ""  # '무료개방 안함', '주말 무료 아님' is the opposite claim
     return m.group(0).strip()[:80] if m else ""
+
+
+NEGATED_FREE = re.compile(r"무료\s*(?:개방|운영)?\s*(?:안\s*함|아님|없음|불가|하지\s*않)|무료\s*제외")
 
 
 def hhmm(v):
@@ -135,6 +186,11 @@ def _loose_match(key, gu, pool, taken):
     hits = [l for l in pool if l["sigungu"] == gu and id(l) not in taken
             and len(_nk(l["name"])) >= 2 and (key in _nk(l["name"]) or _nk(l["name"]) in key)]
     return hits[0] if len(hits) == 1 else None
+
+
+def _dong(addr):
+    m = re.search(r"([가-힣0-9]+(?:동|가|리))\s*(?:산\s*)?\d", re.sub(r"\(.*?\)", "", addr or ""))
+    return m.group(1) if m else None
 
 
 def _addr_key(addr):
@@ -195,6 +251,10 @@ def merge_seoul(lots):
             cands, how = [], "ambiguous_parcel"
         else:
             hit = _loose_match(nk, gu, seoul, taken)
+            if hit and _dong(hit.get("addr_parcel")) and _dong(r["ADDR"]) and _dong(hit["addr_parcel"]) != _dong(r["ADDR"]):
+                review.append({"code": r["PKLT_CD"], "name": r["PKLT_NM"], "addr": r["ADDR"], "why": "loose_other_dong",
+                               "candidates": [{"id": hit["id"], "name": hit["name"], "addr": hit["addr"]}]})
+                continue  # 문래동5가 ↔ 문래동3가: a name fragment in another 동 is not evidence
             cands, how = ([hit], "loose") if hit else ([], None)
             loose += bool(hit)
         if how in ("conflict", "ambiguous_name", "ambiguous_parcel"):
@@ -217,6 +277,11 @@ def merge_seoul(lots):
                 l.setdefault("seoul_codes", [l["seoul_code"]]).append(r["PKLT_CD"])
                 continue
             taken.add(id(l))
+            note_sat, note_hol = bool(_SAT_FREE.search(l["note"] or "")), bool(_HOL_FREE.search(l["note"] or ""))
+            for k, says_free in (("sat_free", note_sat), ("hol_free", note_hol)):
+                if extra[k] is False and says_free:
+                    extra[k] = None  # 2019 Seoul flag says paid, the 2026 standard row says '공휴일 무료개방': neither wins, show both
+                    l["weekend_conflict"] = True
             l.update(extra)
             if not l["month_won"] and to_int(r.get("MNTL_CMUT_CRG")):
                 l["month_won"] = to_int(r.get("MNTL_CMUT_CRG"))
@@ -444,6 +509,8 @@ def main():
             "org": r["INSTITUTION_NM"].strip(), "phone": r["PHONE_NUMBER"].strip(), "lat": lat, "lng": lng,
             "disabled_zone": r["PWDBS_PPK_ZONE_YN"].strip() == "Y", "ref_date": r["REFERENCE_DATE"].strip(), "provider": r["INSTT_NM"].strip(),
         })
+    for l in lots:
+        note_rules(l, l["note"])
     merge_seoul(lots)
     apply_geocode(lots)
     weekend_flags(lots)
@@ -452,11 +519,15 @@ def main():
     for l in lots:
         by_key[(l["sido_slug"], l["sigungu"])].append(l)
     for (ss, sg), lst in by_key.items():
-        used = Counter()
+        used = set()  # the assigned slugs themselves — a lot literally named '감사주차장-2' must not collide with the twin suffix
         for l in sorted(lst, key=lambda x: x["id"]):
             base = slugify_ko(l["name"])
-            used[base] += 1
-            l["slug"] = base if used[base] == 1 else f"{base}-{used[base]}"
+            slug, n = base, 1
+            while slug in used:
+                n += 1
+                slug = f"{base}-{n}"
+            used.add(slug)
+            l["slug"] = slug
             l["path"] = f"{ss}/{sg}/{l['slug']}/"
     out = {"source": {"name": "전국주차장정보표준데이터", "url": "https://www.data.go.kr/data/15012896/standard.do", "file": src.name,
                       "fetched": src.stem.split("_")[1], "rows": len(rows)},

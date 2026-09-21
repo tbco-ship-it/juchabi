@@ -6,7 +6,8 @@
   const won = n => Number.isFinite(n) ? n.toLocaleString('ko-KR') + '원' : '요금 확인 필요';
   // [name, sido idx, sigungu, locality, slug|0, lat, lng, fee(0 무료/1 유료/2 혼합), basic_min, basic_won, add_min, add_won, day_won, month_won, free_open, spaces, costs[1,2,3,5,8h]]
   const FEE = ['무료', '유료', '혼합'];
-  const L = S => a => ({ name: a[0], sido: S[a[1]][1], sigungu: a[2], loc: a[3], path: `${S[a[1]][0]}/${a[2]}/${a[4] || a[0].replace(/\s+/g, '')}/`, lat: a[5], lng: a[6], fee: FEE[a[7]], bmin: a[8], bwon: a[9], amin: a[10], awon: a[11], day: a[12], month: a[13], fo: a[14], spaces: a[15], costs: a[16] || [], q: (a[0] + '|' + a[2] + a[3] + '|' + S[a[1]][1] + a[2]).toLowerCase().replace(/\s+/g, '') });
+  const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));  // names/addresses come from 지자체 files and VWorld — text, never markup
+  const L = S => a => ({ name: a[0], sido: S[a[1]][1], sigungu: a[2], loc: a[3], path: `${S[a[1]][0]}/${a[2]}/${a[4] || a[0].replace(/\s+/g, '')}/`, lat: a[5], lng: a[6], fee: FEE[a[7]], bmin: a[8], bwon: a[9], amin: a[10], awon: a[11], day: a[12], month: a[13], fo: a[14], spaces: a[15], costs: a[16] || [], restricted: a[17] || '', q: (a[0] + '|' + a[2] + a[3] + '|' + S[a[1]][1] + a[2]).toLowerCase().replace(/\s+/g, '') });
   // Fees are computed once in scripts/build.py (cost()); the page only reads them so both surfaces always agree.
   const HOURS = [1, 2, 3, 5, 8];
   const cost = (l, min) => { const i = HOURS.indexOf(min / 60); return i < 0 ? null : (l.costs[i] == null ? null : l.costs[i]); };
@@ -18,7 +19,7 @@
     const num = $('fee-num'), lab = $('fee-for');
     const base1 = JSON.parse(sheet.dataset.costs || '{}');
     let h = 1, pct = 0;
-    const paint = () => { const b = base1[h]; if (b == null) { num.textContent = '요금 확인 필요'; num.classList.add('small-num'); lab.textContent = `${h}시간 · 계산 규칙 미확인`; return; } num.classList.remove('small-num'); const c = Math.round(b * (100 - pct) / 100 / 10) * 10; num.textContent = won(c); lab.textContent = `${h}시간${pct ? ` · ${pct}% 감면` : ''}`; };
+    const paint = () => { const b = base1[h]; if (b == null) { num.textContent = '요금 확인 필요'; num.classList.add('small-num'); lab.textContent = `${h}시간 · 계산 규칙 미확인`; return; } num.classList.remove('small-num'); const c = Math.round(b * (100 - pct) / 100 / 10) * 10; num.textContent = won(c); lab.textContent = `${h}시간${pct ? ` · ${pct}% 감면 · 10원 단위` : ''}`; };
     const seg = (id, key, set) => $(id).addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; $(id).querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b)); set(+b.dataset[key]); paint(); });
     seg('dur', 'h', x => h = x); seg('disc', 'pct', x => pct = x);
     return;
@@ -36,7 +37,7 @@
   // straight-line km → '🚶 약 N분': 4.5 km/h plus 25 % for the real street path (≈ Naver's walking estimate); past 2 km (~35 min) it's not a walk, say nothing
   const walk = d => d <= 2 ? ` · 🚶 약 ${Math.max(1, Math.ceil(d * 1000 * 1.25 / 75))}분` : '';
   // nearest lots to a point (station or GPS); freeOnly keeps 무료 lots
-  const nearest = (la, lo, freeOnly, n = 5) => { const dd = dist(la, lo); return D.filter(l => l.lat && (!freeOnly || l.fee === '무료')).map(l => ({ l, d: dd(l) })).sort((a, b) => a.d - b.d).slice(0, n); };
+  const nearest = (la, lo, freeOnly, n = 5) => { const dd = dist(la, lo); return D.filter(l => l.lat && (!freeOnly || (l.fee === '무료' && !l.restricted))).map(l => ({ l, d: dd(l) })).sort((a, b) => a.d - b.d).slice(0, n); };
   async function fetchIndex(url) {  // a stalled request must not leave the search dead: abort after 8 s and fall into the retry path
     const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 8000);
     try { const r = await fetch(url, { signal: controller.signal }); if (!r.ok) throw new Error('HTTP ' + r.status); return await r.json(); }
@@ -57,13 +58,13 @@
     const cls = l.fee === '무료' ? 'balanced' : (c1 == null ? 'quiet' : '');
     const head = l.fee === '무료' ? '무료' : (c1 == null ? '요금 확인 필요' : won(c1));
     const sub = l.fee === '무료' ? '' : (c1 == null ? '' : '1시간');
-    const line = l.fee === '무료' ? `무료 주차장${l.fo ? ' · 무료 개방 문구 있음' : ''}${l.spaces ? ` · ${l.spaces}면` : ''}` : `${feeLine(l)}${c2 != null ? ` · 2시간 ${won(c2)}` : ''}${c3 != null ? ` · 3시간 ${won(c3)}` : ''}${l.day ? ` · 일주차 ${won(l.day)}` : ''}${l.month ? ` · 월정기 ${won(l.month)}` : ''}`;
-    return `<section class="sheet ${cls}"><p class="sheet-label">${l.sido} ${l.sigungu}${l.loc ? ' ' + l.loc : ''}${extra}</p><div class="sheet-num"><span class="num${head.length > 6 ? ' small-num' : ''}">${head}</span>${sub ? `<span class="pct">${sub}</span>` : ''}</div><p class="sheet-title">${l.name}</p><p class="sheet-text">${line}</p><p class="sheet-actions"><a class="next" href="${base}${l.path.split('/').map(encodeURIComponent).join('/')}">요금표·감면·운영시간</a>${l.lat ? `<a class="next" href="https://map.naver.com/p/search/${encodeURIComponent(l.name + ' ' + l.sigungu)}" target="_blank" rel="noopener">네이버 지도</a>` : ''}</p></section>`;
+    const line = l.fee === '무료' ? `${l.restricted ? `<strong>${esc(l.restricted)}</strong> · ` : ''}무료 주차장${l.fo ? ' · 무료 개방 문구 있음' : ''}${l.spaces ? ` · ${l.spaces}면` : ''}` : `${feeLine(l)}${c2 != null ? ` · 2시간 ${won(c2)}` : ''}${c3 != null ? ` · 3시간 ${won(c3)}` : ''}${l.day ? ` · 일주차 ${won(l.day)}` : ''}${l.month ? ` · 월정기 ${won(l.month)}` : ''}`;
+    return `<section class="sheet ${cls}"><p class="sheet-label">${esc(l.sido)} ${esc(l.sigungu)}${l.loc ? ' ' + esc(l.loc) : ''}${esc(extra)}</p><div class="sheet-num"><span class="num${head.length > 6 ? ' small-num' : ''}">${head}</span>${sub ? `<span class="pct">${sub}</span>` : ''}</div><p class="sheet-title">${esc(l.name)}</p><p class="sheet-text">${line}</p><p class="sheet-actions"><a class="next" href="${base}${l.path.split('/').map(encodeURIComponent).join('/')}">요금표·감면·운영시간</a>${l.lat ? `<a class="next" href="https://map.naver.com/p/search/${encodeURIComponent(l.name + ' ' + l.sigungu)}" target="_blank" rel="noopener">네이버 지도</a>` : ''}</p></section>`;
   }
   // '무료 주차장만': the typed search (name, 동네, 역) narrows to free lots — people look for free parking at a destination, not only around them
   const scope = $('scope'), scopeHint = $('scope-hint');
   let freeOnly = false, lastStation = null;
-  const pool = () => freeOnly ? D.filter(l => l.fee === '무료') : D;
+  const pool = () => freeOnly ? D.filter(l => l.fee === '무료' && !l.restricted) : D;
   let items = [], active = -1;
   // An address ('서면로 15-24', '역삼동 737') is not in the local index: VWorld (국토교통부) search turns it into coordinates and the
   // result joins the list as a '근처 주차장' entry, same flow as a station. Only tried when the local search found nothing and the
@@ -71,7 +72,12 @@
   // a VWorld dev key registered for juchabi.com (their browser-side model — the map JS API carries it the same way). VWorld blocks
   // requests from abroad (Cloudflare Worker proxy got 520), so the browser, in Korea, asks directly.
   const VW = 'https://api.vworld.kr/req/search?service=search&request=search&version=2.0&crs=epsg:4326&type=address&size=5&format=json&key=42AE5930-9672-44AD-9BC4-547E94B085C8';
-  const jsonp = url => new Promise((res, rej) => { const cb = 'vw_' + Math.random().toString(36).slice(2); const s = document.createElement('script'); const done = () => { delete window[cb]; s.remove(); }; window[cb] = j => { done(); res(j); }; s.onerror = () => { done(); rej(new Error('jsonp')); }; s.src = url + '&callback=' + cb; document.head.appendChild(s); });
+  const jsonp = url => new Promise((res, rej) => {  // settles exactly once: callback, script error, script loaded without calling back, or 8 s timeout — never hangs on '주소를 확인하는 중…'
+    const cb = 'vw_' + Math.random().toString(36).slice(2); const s = document.createElement('script'); let settled = false;
+    const finish = (err, j) => { if (settled) return; settled = true; clearTimeout(timer); window[cb] = () => {}; setTimeout(() => delete window[cb], 30000); s.remove(); err ? rej(err) : res(j); };
+    const timer = setTimeout(() => finish(new Error('timeout')), 8000);
+    window[cb] = j => finish(null, j); s.onerror = () => finish(new Error('jsonp')); s.onload = () => setTimeout(() => finish(new Error('no callback')), 0);
+    s.src = url + '&callback=' + cb; document.head.appendChild(s); });
   const SIDO_RE = /^(서울특별시|부산광역시|대구광역시|인천광역시|광주광역시|대전광역시|울산광역시|세종특별자치시|경기도|강원특별자치도|강원도|충청북도|충청남도|전북특별자치도|전라북도|전라남도|경상북도|경상남도|제주특별자치도)\s+\S+\s+/;
   async function vworld(q, category) {
     const j = await jsonp(VW + '&query=' + encodeURIComponent(q) + '&category=' + category); const res = j.response || {};
@@ -103,7 +109,7 @@
     const terms = q.trim().split(/\s+/).map(norm).filter(Boolean);  // '서울 가산동' → both terms must match
     const nq = norm(q);
     // a station name ("거제역", "수원") puts "근처 주차장" first — the lot named 거제 in 거제시 is not what a Busan commuter means
-    const stations = nq.length >= 2 ? ST.filter(s => s.q === nq || s.q === nq + '역' || (nq.endsWith('역') && s.q.startsWith(nq))).slice(0, 2) : [];
+    const stations = nq.length >= 2 ? ST.filter(s => s.q === nq || s.q === nq + '역' || (nq.endsWith('역') && s.q.startsWith(nq)) || (terms.length > 1 && terms.every(t => s.q.includes(t)))).slice(0, 2) : [];
     let lots = terms.length ? pool().filter(l => terms.every(t => l.q.includes(t))) : [];
     // 무료만 + a 동네 with only paid lots ('역삼동'): the paid matches still locate the place — offer '근처 무료 주차장' from their centre
     if (freeOnly && terms.length && !lots.length && !stations.length) { const m = D.filter(l => l.lat && terms.every(t => l.q.includes(t))); if (m.length) { const mid = a => a.sort((x, y) => x - y)[a.length >> 1]; stations.push({ kind: 'area', name: q.trim(), lat: mid(m.map(l => l.lat)), lng: mid(m.map(l => l.lng)), paid: m.length }); } }
@@ -111,7 +117,7 @@
     if (terms.length && !lots.length && !stations.length && looksAddr(key)) { if (addrCache.has(key)) addrs = addrCache.get(key); else { asking = true; geocode(key); } }
     items = terms.length ? [...stations, ...addrs.slice(0, 4), ...lots.slice(0, 8 - stations.length)] : [];
     const empty = !nq ? '주차장 이름, 동네, 역 이름이나 주소를 입력하세요.' : asking ? '주소를 확인하는 중…' : addrs.error ? '주소 확인이 잠시 안 돼요. 동네나 역 이름으로 찾아 주세요.' : looksAddr(key) ? '이 주소를 못 찾았어요. 도로명+건물번호(예: 테헤란로 152)나 동+번지로 쳐 보세요.' : (freeOnly ? '이 이름의 무료 공영주차장이 없어요. 역·동네 이름이나 주소를 치면 그 근처 무료 주차장을 찾아드려요.' : '이 이름의 공영주차장이 없어요. 동네나 역 이름, 주소로도 찾아보세요.');
-    menu.innerHTML = items.length ? (addrs[0] && addrs[0].miss ? `<li class="empty">'${addrs[0].miss}'는 없는 주소예요 · 비슷한 주소 기준</li>` : '') + items.map((l, i) => l.kind ? `<li id="q-option-${i}" role="option" data-i="${i}" aria-selected="${i === active}">${l.name} 근처 ${freeOnly ? '무료 ' : ''}주차장<small class="muted"> ${l.kind === 'area' ? `이 동네 공영주차장 ${l.paid}곳은 모두 유료 · 가까운 순` : l.kind === 'addr' ? l.addr + ' · 가까운 순' : '역 기준 가까운 순'}</small></li>` : `<li id="q-option-${i}" role="option" data-i="${i}" aria-selected="${i === active}">${l.name}<small class="muted"> ${l.sido} ${l.sigungu}${l.loc ? ' ' + l.loc : ''} · ${l.fee === '무료' ? '무료' : (cost(l, 60) != null ? '1시간 ' + won(cost(l, 60)) : l.fee)}</small></li>`).join('') : `<li class="empty">${empty}</li>`;
+    menu.innerHTML = items.length ? (addrs[0] && addrs[0].miss ? `<li class="empty">'${esc(addrs[0].miss)}'는 찾지 못한 주소예요 · 비슷한 주소 기준</li>` : '') + items.map((l, i) => l.kind ? `<li id="q-option-${i}" role="option" data-i="${i}" aria-selected="${i === active}">${esc(l.name)} 근처 ${freeOnly ? '무료 ' : ''}주차장<small class="muted"> ${l.kind === 'area' ? `이 동네 공영주차장 ${l.paid}곳은 모두 유료 · 가까운 순` : l.kind === 'addr' ? esc(l.addr) + ' · 가까운 순' : '역 기준 가까운 순'}</small></li>` : `<li id="q-option-${i}" role="option" data-i="${i}" aria-selected="${i === active}">${esc(l.name)}<small class="muted"> ${esc(l.sido)} ${esc(l.sigungu)}${l.loc ? ' ' + esc(l.loc) : ''} · ${l.fee === '무료' ? '무료' : (cost(l, 60) != null ? '1시간 ' + won(cost(l, 60)) : l.fee)}</small></li>`).join('') : `<li class="empty">${empty}</li>`;
     menu.hidden = false; input.setAttribute('aria-expanded', 'true');
     const option = active >= 0 ? $(`q-option-${active}`) : null;
     if (option) { input.setAttribute('aria-activedescendant', option.id); option.scrollIntoView({ block: 'nearest' }); } else input.removeAttribute('aria-activedescendant');
@@ -148,7 +154,7 @@
       const near = nearest(l.lat, l.lng, freeOnly, 6);
       const msg = $('geo-msg'); msg.hidden = false;
       // the nearest free lot may be far (강남역 → 과천 3.9 km): say so instead of presenting it as 'near'
-      msg.textContent = (l.miss ? `'${l.miss}'는 없는 주소예요 · ` : '') + (freeOnly && near.length && near[0].d > 2 ? `${l.name} 2 km 안에는 무료 공영주차장이 없어요 · 가장 가까운 ${near.length}곳 (직선거리)` : `${l.name} 근처 ${freeOnly ? '무료 ' : ''}주차장 ${near.length}곳 (직선거리)`);
+      msg.textContent = (l.miss ? `'${l.miss}'는 찾지 못한 주소예요 · ` : '') + (freeOnly && near.length && near[0].d > 2 ? `${l.name} 2 km 안에는 등록된 무료 주차장이 없어요 · 가장 가까운 ${near.length}곳 (직선거리)` : `${l.name} 근처 ${freeOnly ? '무료 ' : ''}주차장 ${near.length}곳 (직선거리)`);
       show(near.map(({ l: x, d }) => card(x, ` · ${l.name}에서 ${fmtKm(d)}${walk(d)}`)).join(''));
       bringIntoView(msg);  // the '… N곳' line explains the list (esp. '2 km 안에는 없어요') — keep it on screen above the cards
       return;
@@ -157,7 +163,7 @@
     bringIntoView(out);
   }
   input.addEventListener('focus', () => { setTimeout(() => input.select(), 0); open(input.value); });
-  input.addEventListener('input', () => { ++userIntent; active = -1; open(input.value); });
+  input.addEventListener('input', () => { ++userIntent; active = -1; lastStation = null; open(input.value); });
   input.addEventListener('keydown', e => {
     if (e.isComposing || e.keyCode === 229) return;  // Hangul composition: Enter finishes the syllable, it must not pick a result
     if (menu.hidden) return;
@@ -185,6 +191,7 @@
     busy(btn, true); const ticket = ++userIntent;
     navigator.geolocation.getCurrentPosition(pos => {
       busy(btn, false); if (ticket !== userIntent) return; msg.hidden = false;
+      lastStation = { kind: 'gps', name: '내 위치', lat: pos.coords.latitude, lng: pos.coords.longitude }; input.value = '';  // the 전체/무료만 toggle re-filters around here, not around a station picked earlier
       const near = nearest(pos.coords.latitude, pos.coords.longitude, freeOnly, 5);
       msg.textContent = freeOnly ? `가까운 무료 주차장 ${near.length}곳 (직선거리)` : `가까운 주차장 ${near.length}곳 (직선거리)`;
       show(near.map(({ l, d }) => card(l, ` · ${fmtKm(d)}${walk(d)}`)).join(''));

@@ -12,6 +12,6 @@
 </section>
 <div class="ad-slot"><!-- ad: sido --></div>
 <div class="sec"><div class="sec-h"><h2>시군구별</h2></div>
-<ul class="list">{% for g in s.sigungu.values() %}<li><a href="{{ base }}{{ s.slug }}/{{ g.name }}/">{{ g.name }} <small>{{ g.stats.n }}곳 · 무료 {{ g.stats.free }}</small><span class="meta">{% if g.stats.h1_med is not none %}1시간 {{ g.stats.h1_med|won }}{% else %}전부 무료{% endif %}</span></a></li>{% endfor %}</ul></div>
+<ul class="list">{% for g in s.sigungu.values() %}<li><a href="{{ base }}{{ s.slug }}/{{ g.name }}/">{{ g.name }} <small>{{ g.stats.n }}곳 · 무료 {{ g.stats.free }}</small><span class="meta">{% if g.stats.h1_med is not none %}1시간 {{ g.stats.h1_med|won }}{% elif g.stats.free == g.stats.n %}전부 무료{% else %}요금 확인 필요{% endif %}</span></a></li>{% endfor %}</ul></div>
 <p class="muted small">1시간 요금은 각 주차장의 기본시간·추가단위요금으로 환산한 값의 중앙값입니다. 지자체 기준일 최신 {{ s.stats.latest }}.</p>
 {% endblock %}

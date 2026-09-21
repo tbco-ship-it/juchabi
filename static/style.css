@@ -689,3 +689,4 @@ button.next{appearance:none;-webkit-appearance:none;border:0;font-family:inherit
 .tbl.emd td[data-l]:not([data-l=""])::before{content:" · " attr(data-l) " ";color:var(--muted);font-weight:500}
 .tbl.emd td[data-l="1시간"]:not([data-l=""])::before{content:attr(data-l) " "}
 }
+.warn{color:var(--danger,#d6453d);font-weight:600;font-size:.85em}
