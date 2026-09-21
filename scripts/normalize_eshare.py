@@ -95,6 +95,10 @@ ROAD_END = re.compile(r"(?:대로|로|길|거리)\s*(?:지하\s*)?\d+(?:-\d+)?\s
 PARCEL_END = re.compile(r"(?:동|리|가)\s*(?:산\s*)?\d+(?:-\d+)?(?:번지)?\s*$")
 ESHARE_HOSTS = {"www.eshare.go.kr", "eshare.go.kr"}
 OPEN_LABELS = ("평일개방", "토요일개방", "휴일개방")
+BARE_PARKING_NAME = re.compile(r"^(?:지상|지하|부설|옥외|옥내|청사|본관|별관)?(?:주차장|공영주차장|주차타워)$")
+PLACE_TOKEN_SUFFIXES = ("세무서", "도서관", "진흥원", "공단", "공사", "센터", "학교", "지사", "동", "읍", "면", "청", "관", "원", "소", "단")
+DEPARTMENT_TOKEN_SUFFIXES = ("과", "본부", "처", "팀", "실", "국")
+TOKEN_EDGE_PUNCTUATION = "()[]{}<>.,·ㆍ"
 
 
 def slugify_ko(name: str) -> str:
@@ -108,6 +112,51 @@ def normalize_name(value: Any) -> str:
     text = unicodedata.normalize("NFKC", str(value or "")).lower()
     text = NAME_NOISE.sub("", text)
     return re.sub(r"[^0-9a-z가-힣]", "", text)
+
+
+def _institution_tokens(value: Any) -> list[str]:
+    return [
+        token.strip(TOKEN_EDGE_PUNCTUATION)
+        for token in re.split(r"\s+", str(value or "").strip())
+        if token.strip(TOKEN_EDGE_PUNCTUATION)
+    ]
+
+
+def _institution_place_token(value: Any) -> str:
+    """Find the rightmost institution token that identifies a place."""
+    for token in reversed(_institution_tokens(value)):
+        if any(token.endswith(suffix) for suffix in DEPARTMENT_TOKEN_SUFFIXES):
+            continue
+        if any(token.endswith(suffix) for suffix in PLACE_TOKEN_SUFFIXES):
+            return token
+    return ""
+
+
+def _institution_fallback_token(value: Any, sigungu: str) -> str:
+    """Keep the sigungu and all institution tokens after it for a fallback name."""
+    institution = _institution_tokens(value)
+    sigungu_tokens = _institution_tokens(sigungu)
+    if not institution:
+        return " ".join(sigungu_tokens)
+    if sigungu_tokens:
+        last_sigungu = sigungu_tokens[-1]
+        for index, token in enumerate(institution):
+            if token == last_sigungu:
+                return " ".join((*sigungu_tokens, *institution[index + 1:]))
+    return " ".join((*sigungu_tokens, *institution))
+
+
+def enriched_new_name(row: dict[str, Any], geo: dict[str, Any]) -> tuple[str, str]:
+    """Disambiguate only generic new-resource names without changing match keys."""
+    raw_name = str(row.get("rsrcNm") or row.get("lcInf") or f"공유누리 {row.get('rsrcNo')}").strip()
+    if not BARE_PARKING_NAME.fullmatch(re.sub(r"\s+", "", raw_name)):
+        return raw_name, ""
+    token = _institution_place_token(row.get("rsrcInstNm"))
+    if not token:
+        token = _institution_fallback_token(row.get("rsrcInstNm"), str(geo.get("sigungu") or ""))
+    if not token:
+        return raw_name, ""
+    return f"{token} {raw_name}", raw_name
 
 
 def source_name_text(row: dict[str, Any]) -> str:
@@ -463,7 +512,7 @@ def _new_lot(row: dict[str, Any], geo: dict[str, Any]) -> dict[str, Any]:
     type_name = (row.get("rsrcClsNm") or "노외").strip()
     if type_name == "주차장":
         type_name = "노외"
-    name = (row.get("rsrcNm") or row.get("lcInf") or f"공유누리 {row.get('rsrcNo')}").strip()
+    name, name_raw = enriched_new_name(row, geo)
     # Keep the full cleaned text for classification.  Only the stored display
     # note is truncated; otherwise a paid clause after byte/character 600 can
     # incorrectly turn a mixed resource into a free one.
@@ -472,7 +521,7 @@ def _new_lot(row: dict[str, Any], geo: dict[str, Any]) -> dict[str, Any]:
     free_code = str(row.get("freeYn") or "").upper()
     fee, fee_review, fee_raw = fee_evidence(full_note, free_code)
     open_days = open_days_from_values(row.get("rsrcIntr"), row.get("atpn"))
-    return {
+    result = {
         "id": f"eshare-{row['rsrcNo']}", "name": name, "kind": "개방", "type": type_name,
         "addr": re.sub(r"\s+", " ", str(row.get("addr") or "")).strip(), "addr_parcel": "",
         "sido": geo["sido"], "sido_slug": geo["sido_slug"], "sigungu": geo["sigungu"], "gu": "",
@@ -487,6 +536,9 @@ def _new_lot(row: dict[str, Any], geo: dict[str, Any]) -> dict[str, Any]:
         "disabled_zone": False, "ref_date": row.get("updYmd") or "", "provider": "공유누리",
         "eshare": _eshare_value(row), "eshare_rsrc_cls_cd": row.get("rsrcClsCd") or "",
     }
+    if name_raw:
+        result["name_raw"] = name_raw
+    return result
 
 
 def analyze_rows(rows: list[dict[str, Any]], lots: list[dict[str, Any]]) -> dict[str, Any]:
@@ -819,6 +871,12 @@ def write_report(candidate: dict[str, Any], rows: list[dict[str, Any]], existing
     lines += ["", "## 검토 사유", "", "| 사유 | 건수 |", "|---|---:|"]
     for reason, count in sorted(summary["review_reasons"].items(), key=lambda x: (-x[1], x[0])):
         lines.append(f"| `{reason}` | {count:,} |")
+    generic_names = [lot for lot in candidate["new_lots"] if lot.get("name_raw")]
+    lines += ["", "## 신규 generic 이름 보정", "", f"신규 원명칭이 시설 식별에 부족한 {len(generic_names)}건만 표시명을 보정했습니다. 매칭에는 원자료 명칭을 사용했고, 원명칭은 `name_raw`에 보존했습니다.", "", "| rsrcNo | 원명칭 | 표시명 | 기관 | 경로 |", "|---|---|---|---|---|"]
+    for lot in generic_names:
+        source_id = str(lot["id"]).removeprefix("eshare-")
+        cells = [source_id, lot["name_raw"], lot["name"], lot["org"], lot["path"]]
+        lines.append("| " + " | ".join(str(cell).replace("|", "\\|") for cell in cells) + " |")
     lines += ["", "## 무작위 신규 20건 검증", "", f"시드 `20260921`로 신규에서 무작위 추출했습니다. 좌표상 가장 가까운 기존 lot의 시군구 일치 {sigungu_ok_count}/{len(sample_checks)}, 원문 freeYn·요금 신호 기준 fee 분류 일치 {fee_ok_count}/{len(sample_checks)}입니다.", "", "| rsrcNo | 이름 | 주소 | 좌표 | 기관 | 원문 freeYn | 분류 | fee 검증 | 최근접 lot 시군구 | 거리 | 주소 시군구 검증 |", "|---|---|---|---|---|---|---|---|---|---:|---|"]
     for check in sample_checks:
         lot, row, nearest = check["lot"], check["row"], check["nearest"]

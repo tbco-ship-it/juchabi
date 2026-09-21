@@ -18,6 +18,7 @@ from normalize_eshare import (  # noqa: E402
     address_key,
     address_system,
     classify_sido,
+    enriched_new_name,
     fee_evidence,
     geography_status,
     html_to_text,
@@ -103,6 +104,23 @@ class EsharePipelineTests(unittest.TestCase):
         self.assertEqual(generated["type"], "부설")
         self.assertEqual(generated["fee"], "무료")
         self.assertEqual(generated["provider"], "공유누리")
+
+    def test_generic_new_names_use_place_token_and_keep_name_raw(self):
+        cases = [
+            ("지상주차장", "국민건강보험공단 인천경기본부 안산지사", "안산시", "안산지사 지상주차장"),
+            ("주차장", "강원특별자치도교육청 강원특별자치도강릉교육지원청 구정초등학교", "강릉시", "구정초등학교 주차장"),
+            ("주차장", "인천광역시 부평구 청천1동", "부평구", "청천1동 주차장"),
+            ("주차장", "국세청 중부지방국세청 시흥세무서", "시흥시", "시흥세무서 주차장"),
+            ("주차장", "인천광역시 부평구 자치행정국 총무과", "부평구", "부평구 자치행정국 총무과 주차장"),
+        ]
+        for index, (raw_name, institution, sigungu, expected) in enumerate(cases, 1):
+            row = source(rsrcNo=f"GENERIC-{index}", rsrcNm=raw_name, rsrcInstNm=institution)
+            generated = _new_lot(row, {**geography_status(row), "sigungu": sigungu})
+            self.assertEqual(generated["name"], expected)
+            self.assertEqual(generated["name_raw"], raw_name)
+
+        ordinary = _new_lot(source(rsrcNo="ORDINARY-1"), geography_status(source()))
+        self.assertNotIn("name_raw", ordinary)
 
     def test_free_window_paid_signal_becomes_mixed_and_paid_code_is_paid(self):
         self.assertEqual(fee_evidence("평일 09~18시 유료, 최초 30분 600원", "Y")[:2], ("혼합", True))
