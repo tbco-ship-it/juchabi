@@ -6,7 +6,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 HOST = "juchabi.com"
 KEY = (ROOT / "static/indexnow-key.txt").read_text().strip()
-urls = re.findall(r"<loc>([^<]+)</loc>", (ROOT / "dist/sitemap.xml").read_text())
+_sm = sorted((ROOT / "dist/sitemaps").glob("*.xml")) or [ROOT / "dist/sitemap.xml"]
+urls = [u for f in _sm for u in re.findall(r"<loc>([^<]+)</loc>", f.read_text())]
 if len(sys.argv) > 1:
     urls = [u for u in urls if any(p in u for p in sys.argv[1:])]
 for i in range(0, len(urls), 10000):

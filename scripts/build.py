@@ -171,6 +171,36 @@ def hours_line(h):
     return "24시간" if (o == "00:00" and c in ("23:59", "24:00")) else f"{o}~{c}"
 
 
+
+def write_sitemaps(urls, origin, base, lastmod=None, limit=5000):
+    """One sitemap index plus a file per section, so Search Console reports coverage per section
+    instead of one opaque pile. urls is a list of (shard, path)."""
+    shards = defaultdict(list)
+    for shard, u in urls:
+        shards[shard].append(u)
+    for k in [k for k, v in shards.items() if len(v) < 10 and k != "core"]:
+        shards["core"] += shards.pop(k)
+    out = DIST / "sitemaps"
+    out.mkdir(parents=True, exist_ok=True)
+    names = []
+    for shard in sorted(shards):
+        rows = shards[shard]
+        parts = [rows[i:i + limit] for i in range(0, len(rows), limit)] or [[]]
+        for n, part in enumerate(parts, 1):
+            fn = f"{shard}.xml" if len(parts) == 1 else f"{shard}-{n}.xml"
+            lm = f"<lastmod>{lastmod}</lastmod>" if lastmod else ""
+            body = "\n".join(f"<url><loc>{escape(origin + base + u)}</loc>{lm}</url>" for u in part)
+            (out / fn).write_text('<?xml version="1.0" encoding="UTF-8"?>\n'
+                                  '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+                                  + body + "\n</urlset>")
+            names.append(fn)
+    idx = "".join(f"<sitemap><loc>{origin}{base}sitemaps/{n}</loc></sitemap>" for n in names)
+    (DIST / "sitemap.xml").write_text('<?xml version="1.0" encoding="UTF-8"?>\n'
+                                      '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+                                      + idx + "</sitemapindex>")
+    return names
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="/juchabi/")
@@ -362,7 +392,7 @@ def main():
             raise ValueError(f"output path escapes dist: {path!r}")
         return out
 
-    def write(path, template, **ctx):
+    def write(path, template, sm=None, **ctx):
         out = safe_output_dir(path)
         canonical = canonical_output_path(path)
         if canonical in written:
@@ -370,7 +400,7 @@ def main():
         written.add(canonical)
         out.mkdir(parents=True, exist_ok=True)
         (out / "index.html").write_text(env.get_template(template).render(path=path, **ctx))
-        urls.append(path)
+        urls.append((sm or path.split("/")[0] or "core", path))
 
     write("", "index.html")
     for page in ("about", "methodology", "privacy", "contact"):
@@ -399,19 +429,7 @@ def main():
             for l in g["lots"]:
                 write(l["path"], "lot.html", s=s, g=g, l=l, near=find_nearby(l))
 
-    # sitemap (split at 40k urls to stay well under the 50k/50MB limit)
-    chunks = [urls[i:i + 40000] for i in range(0, len(urls), 40000)]
-    names = []
-    for i, ch in enumerate(chunks):
-        name = "sitemap.xml" if len(chunks) == 1 else f"sitemap-{i + 1}.xml"
-        names.append(name)
-        sm = ['<?xml version="1.0" encoding="UTF-8"?>', '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
-        for u in ch:
-            sm.append(f"<url><loc>{escape(origin + base + u)}</loc></url>")  # no lastmod: we don't track per-page change dates
-        sm.append("</urlset>")
-        (DIST / name).write_text("\n".join(sm))
-    if len(chunks) > 1:
-        (DIST / "sitemap.xml").write_text('<?xml version="1.0" encoding="UTF-8"?>\n<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' + "".join(f"<sitemap><loc>{origin}{base}{n}</loc></sitemap>" for n in names) + "</sitemapindex>")
+    write_sitemaps(urls, origin, base)
     (DIST / "robots.txt").write_text(f"User-agent: *\nAllow: /\nSitemap: {origin}{base}sitemap.xml\n")
     (DIST / "404.html").write_text(env.get_template("404.html").render(path="404"))
     (DIST / ".nojekyll").write_text("")
