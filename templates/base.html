@@ -18,7 +18,7 @@
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#17171c" media="(prefers-color-scheme: dark)">
 {% if adsense_pub %}<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-{{ adsense_pub }}" crossorigin="anonymous"></script>{% endif %}
-{% if origin == "https://juchabi.com" %}<script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "2e1b67fa21e542f5b495f8e3816a1e61"}'></script>{% endif %}
+{% if origin == "https://juchabi.com" %}<script>/* Cloudflare Web Analytics — skipped for automated browsers so our own QA runs don't land in the visitor counts */if(!navigator.webdriver){var b=document.createElement('script');b.defer=true;b.src='https://static.cloudflareinsights.com/beacon.min.js';b.setAttribute('data-cf-beacon','{"token": "2e1b67fa21e542f5b495f8e3816a1e61"}');document.head.appendChild(b);}</script>{% endif %}
 {% block head %}{% endblock %}
 </head>
 <body>
