@@ -37,7 +37,7 @@
 {% block content %}{% endblock %}
 </main>
 <footer>
-  <p><a href="{{ base }}about/">소개</a> · <a href="{{ base }}methodology/">데이터 출처</a> · <a href="{{ base }}guide/fee/">요금 계산 방식</a> · <a href="{{ base }}privacy/">개인정보처리방침</a> · <a href="{{ base }}contact/">문의</a></p>
+  <p><a href="{{ base }}about/">소개</a> · <a href="{{ base }}methodology/">데이터 출처</a> · <a href="{{ base }}guide/fee/">요금 계산 방식</a> · <a href="{{ base }}privacy/">개인정보처리방침</a> · <a href="{{ base }}terms/">이용약관</a> · <a href="{{ base }}contact/">문의</a></p>
   <p class="muted">공공데이터포털 전국주차장정보표준데이터({{ source.fetched[:4] }}-{{ source.fetched[4:6] }}-{{ source.fetched[6:] }} 수집, 지자체 기준일 최신 {{ total.latest }}) 기준. 요금과 감면은 지자체 조례 개정으로 바뀔 수 있으니 현장 안내판이 우선입니다.</p>
 </footer>
 <script src="{{ base }}static/ui.js?v={{ v }}" defer></script>
