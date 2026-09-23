@@ -256,7 +256,18 @@ def main():
                 "weekend_free": len([l for l in paid if l.get("sat_free") or l.get("hol_free")]),
                 "monthly": len([l for l in lst if l["month_won"]]), "free_open": len([l for l in lst if is_time_window_free_open(l)]),
                 "disc": Counter(k for l in lst for k in l["discounts"]).most_common(4),
-                "latest": max((l["ref_date"] for l in lst), default="")}
+                "latest": max((l["ref_date"] for l in lst), default=""),
+                "h24": len([l for l in lst if l["h_week"] == "24시간"])}
+
+    def durations(lst):
+        """Per stay length: median and cheapest paid lot — the comparison a driver otherwise does by hand across lot pages."""
+        rows = []
+        for h in HOURS:
+            priced = sorted(((l["costs"][h], l["name"], l) for l in lst if l["fee"] != "무료" and l["costs"][h] is not None), key=lambda x: (x[0], x[1]))
+            if len(priced) < 2:
+                continue
+            rows.append({"h": h, "n": len(priced), "med": median([c for c, _, _ in priced]), "min": priced[0][0], "lot": priced[0][2]})
+        return rows
     for s in sidos.values():
         s["stats"] = stats(s["lots"])
         for g in s["sigungu"].values():
@@ -279,6 +290,14 @@ def main():
             g["emd"] = dict(sorted(g["emd"].items(), key=lambda kv: (-kv[1]["stats"]["n"], kv[0])))
             for l in g["lots"]:
                 l["emd_path"] = g["emd"][l["emd"]]["path"] if l["emd"] in g["emd"] else ""
+            g["dur"] = durations(g["lots"])
+            for e in g["emd"].values():
+                e["dur"] = durations(e["lots"])
+        priced_g = [g for g in s["sigungu"].values() if g["stats"]["h1_med"] is not None]
+        for g in s["sigungu"].values():
+            g["rank"] = None
+        for g in priced_g:  # 비싼 순 순위 — 같은 값은 같은 순위
+            g["rank"] = (1 + sum(o["stats"]["h1_med"] > g["stats"]["h1_med"] for o in priced_g), len(priced_g)) if len(priced_g) >= 3 else None
         s["sigungu"] = dict(sorted(s["sigungu"].items(), key=lambda kv: -kv[1]["stats"]["n"]))
     sidos = {k: sidos[k] for k in SIDO_ORDER if k in sidos}
     total = stats(lots)

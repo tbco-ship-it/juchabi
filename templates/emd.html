@@ -12,6 +12,7 @@
   <p class="sheet-text">전체 {{ e.stats.n }}곳 중 무료 {{ e.stats.free }}곳, 유료 {{ e.stats.paid }}곳{% if e.stats.mixed %}, 부분 유료 {{ e.stats.mixed }}곳{% endif %}{% if e.stats.weekend_free %}, 토·공휴일 무료 {{ e.stats.weekend_free }}곳{% endif %}{% if e.stats.free_open %}, 무료 개방 시간대가 안내된 곳 {{ e.stats.free_open }}곳{% endif %}{% if e.stats.monthly %}, 월정기권 {{ e.stats.monthly }}곳{% endif %}.</p>
 </section>
 <div class="ad-slot"><!-- ad: emd --></div>
+{% set rank_line = '' %}{% if e.stats.h1_med is not none and g.stats.h1_med is not none and e.stats.h1_n >= 2 %}{% set d = e.stats.h1_med - g.stats.h1_med %}{% set rank_line = e.name ~ ' 유료 1시간 중앙값은 ' ~ (e.stats.h1_med|won) ~ '으로, ' ~ g.name ~ ' 전체(' ~ (g.stats.h1_med|won) ~ ')보다 ' ~ ((d|abs)|won ~ (' 쌉니다.' if d < 0 else ' 비쌉니다.')) if d != 0 else e.name ~ ' 유료 1시간 중앙값은 ' ~ (e.stats.h1_med|won) ~ '으로 ' ~ g.name ~ ' 전체와 같습니다.' %}{% endif %}{% set x = e %}{% include "_dur.html" %}
 <div class="sec"><div class="sec-h"><h2>요금·무료 시간 표 <span class="muted small">{{ e.stats.n }}곳</span></h2></div>
 <div class="tbl-wrap"><table class="tbl emd">
 <thead><tr><th>주차장</th><th>1시간</th><th>무료 여부</th><th>토요일</th><th>공휴일</th><th>평일 운영</th><th>면수</th></tr></thead>

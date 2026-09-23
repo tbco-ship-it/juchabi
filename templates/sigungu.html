@@ -14,6 +14,7 @@
   {% set ds = [] %}{% for k in CAT_ORDER %}{% if g.disc_summary[k] %}{% set _ = ds.append(CAT_LABEL[k] ~ ' ' ~ g.disc_summary[k][0][0] ~ '%') %}{% endif %}{% endfor %}{% if ds %}가장 흔한 감면: {{ ds|join(' · ') }}.{% else %}감면 문구가 데이터에 없어 {{ g.name }} 조례 확인이 필요합니다.{% endif %}</p>
 </section>
 <div class="ad-slot"><!-- ad: sigungu --></div>
+{% set rank_line = (s.short ~ ' ' ~ g.rank[1] ~ '개 시군구 중 유료 1시간 중앙값이 비싼 순으로 ' ~ g.rank[0] ~ '번째입니다. ' ~ s.short ~ ' 전체 중앙값은 ' ~ (s.stats.h1_med|won) ~ '입니다.') if g.rank else '' %}{% set x = g %}{% include "_dur.html" %}
 {% if g.emd %}<div class="sec"><div class="sec-h"><h2>동네별 요금·무료 시간 표 <span class="muted small">{{ g.emd|length }}개 읍면동</span></h2></div>
 <div class="chips">{% for e in g.emd.values() %}<a class="chip" href="{{ base }}{{ e.path }}">{{ e.name }} <small>{{ e.stats.n }}곳{% if e.stats.free %} · 무료 {{ e.stats.free }}{% endif %}</small></a>{% endfor %}</div></div>{% endif %}
 {% set paid = g.lots|rejectattr('fee','equalto','무료')|list %}{% set free = g.lots|selectattr('fee','equalto','무료')|list %}

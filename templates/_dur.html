@@ -1,0 +1,8 @@
+{# 주차 시간별 중앙값·가장 싼 유료 주차장 — x: 시군구(g) 또는 읍면동(e), scope: 이름, rank_line: 비교 문장 #}
+{% if x.dur %}<div class="sec"><div class="sec-h"><h2>몇 시간 세우면 얼마 · 가장 싼 곳</h2></div>
+{% if rank_line %}<p>{{ rank_line }}</p>{% endif %}
+<div class="tbl-wrap"><table class="tbl dur">
+<thead><tr><th>주차 시간</th><th>유료 중앙값</th><th>가장 싼 유료 주차장</th></tr></thead>
+<tbody>{% for r in x.dur %}<tr><td>{{ r.h }}시간</td><td data-l="중앙값">{{ r.med|won }}<small class="muted">{{ r.n }}곳 기준</small></td><td data-l="최저"><b>{{ r.min|won }}</b><a href="{{ base }}{{ r.lot.path }}">{{ r.lot.name }}</a></td></tr>{% endfor %}</tbody>
+</table></div>
+<p class="muted small">{% if x.stats.free %}무료 주차장 {{ x.stats.free }}곳은 표에서 뺐습니다. {% endif %}{% if x.stats.weekend_free %}유료 중 토요일·공휴일 무료인 곳 {{ x.stats.weekend_free }}곳. {% endif %}{% if x.stats.h24 %}평일 24시간 운영 {{ x.stats.h24 }}곳. {% endif %}감면 전 금액이며, 1일 최대요금이 적힌 곳은 그 상한을 적용했습니다. 요금 규칙이 복합이거나 비어 있는 곳은 빠집니다.</p></div>{% endif %}
